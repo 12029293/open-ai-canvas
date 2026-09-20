@@ -9,7 +9,7 @@ require (
 	github.com/go-rod/rod v0.116.2
 	github.com/google/uuid v1.5.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/qiniu/go-sdk/v7 v7.27.0
+	github.com/qiniu/go-sdk/v7 v7.28.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/syndtr/goleveldb v1.0.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
