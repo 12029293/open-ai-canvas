@@ -259,6 +259,8 @@ schema v27 为 `channel_model_price_tiers` 和 `billing_orders` 添加 `cost_con
 
 Schema 30 新增 `tools`，31 新增 `tool_favorites`；主分支已有 28（Agent 执行日志）、29（资源租约）编号和 checksum 不变。
 
+Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`），通过 JSON serializer 存储有序的 `{ text, color }` 数组。每个模型最多 5 个标签，文字去除首尾空白后为 1–12 字且不重复，颜色为 `purple/blue/green/gold/orange/pink`。标签仅用于展示，不影响价格、能力和路由。后端启动时执行增量迁移，已有模型默认无标签；回退应用可保留此新增列，若人工删除列会丢失标签配置，须先备份。
+
 - `tools`：自增 `id`、类型 `type`、名称 `label/label_en`、描述/标签、`prompt`、预览 `cover/media_url/extra_info_json`、比例、`owner_id`、`source`、`enabled`、`visibility`、排序权重和时间。
 - `tool_favorites`：`id`、`user_id`、`tool_id`、收藏时间；用户和工具联合唯一。删除自己的自定义工具时事务清理收藏，不删除预览文件。
 - 启动幂等装载 87 个预设（风格 45、运镜 33、九宫格 9），不下载第三方媒体。显式 ID 与用户工具冲突时启动报错，不覆盖用户数据；PostgreSQL 同步自增序列。

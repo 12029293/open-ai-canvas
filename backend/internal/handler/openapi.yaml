@@ -141,6 +141,21 @@ paths:
                                     type: string
                                     maxLength: 80
                                     default: ""
+                                  tags:
+                                    type: array
+                                    maxItems: 5
+                                    description: 后台模型创建及更新使用同名字段；文字去除首尾空白且不能重复，空数组清除标签，仅用于展示。
+                                    items:
+                                      type: object
+                                      required: [text, color]
+                                      properties:
+                                        text:
+                                          type: string
+                                          minLength: 1
+                                          maxLength: 12
+                                        color:
+                                          type: string
+                                          enum: [purple, blue, green, gold, orange, pink]
                                   description:
                                     type: string
                                     maxLength: 500
