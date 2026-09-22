@@ -1,6 +1,6 @@
 import { App, Button, InputNumber } from "antd";
 import { SettingsRow } from "@/components/ui/product/settings-row";
-import { ArrowLeft, Boxes, Brain, Bug, Cloud, MessageSquareText, RadioTower, SlidersHorizontal, Workflow } from "lucide-react";
+import { ArrowLeft, Boxes, Brain, Bug, Cloud, Globe, MessageSquareText, RadioTower, SlidersHorizontal, Workflow } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -9,6 +9,7 @@ import { refreshSystemChannels } from "@/lib/user-session";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
+import { NetworkProxySettingsPane } from "./network-proxy-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import DiagnosticsPanel from "./diagnostics-panel";
@@ -17,12 +18,13 @@ import { RunningHubSettingsPane } from "./runninghub-settings-pane";
 import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 
-type ConfigSectionKey = "channels" | "models" | "runninghub" | "preferences" | "prompts" | "agent-memory" | "storage" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "runninghub" | "network" | "preferences" | "prompts" | "agent-memory" | "storage" | "diagnostics";
 
 const configSections: Array<{ key: ConfigSectionKey; label: string; description: string; icon: ReactNode }> = [
     { key: "channels", label: "个人渠道", description: "模型服务与个人工作流", icon: <RadioTower className="size-4" /> },
     { key: "runninghub", label: "RunningHub 工作流", description: "个人渠道的云端工作流配置", icon: <Workflow className="size-4" /> },
     { key: "models", label: "模型选择", description: "按领域选择默认模型", icon: <Boxes className="size-4" /> },
+    { key: "network", label: "网络代理", description: "代理列表与账号分配", icon: <Globe className="size-4" /> },
     { key: "preferences", label: "生成偏好", description: "画布生成默认值", icon: <SlidersHorizontal className="size-4" /> },
     { key: "prompts", label: "提示词偏好", description: "按任务定制平台模板", icon: <MessageSquareText className="size-4" /> },
     { key: "agent-memory", label: "Agent 记忆", description: "批准、添加、导出导入、压缩", icon: <Brain className="size-4" /> },
@@ -122,6 +124,19 @@ export default function SettingsPage() {
             </SettingsPane>
         ),
         runninghub: <SettingsPane><RunningHubSettingsPane /></SettingsPane>,
+        network: (
+            <SettingsPane>
+                <div className="settings-pane-header">
+                    <div className="min-w-0">
+                        <h2>网络代理</h2>
+                        <p>为账号绑定出网代理：豆包 / Dola / DeepSeek 的服务端请求走指定代理；千问、Dola 网页登录是浏览器链路，暂不生效。</p>
+                    </div>
+                </div>
+                <div className="settings-section">
+                    <NetworkProxySettingsPane />
+                </div>
+            </SettingsPane>
+        ),
         preferences: (
             <SettingsPane>
                 <div className="settings-pane-header">

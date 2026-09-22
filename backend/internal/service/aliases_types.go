@@ -348,3 +348,33 @@ func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
 func CloudAgentSupportedToolNames() []string {
 	return app.CloudAgentSupportedToolNames()
 }
+
+// 豆包账号池请求/响应类型（实现在 internal/app/doubao_bridge.go）。
+type (
+	DoubaoUpsertRequest     = app.DoubaoUpsertRequest
+	DoubaoBulkImportRequest = app.DoubaoBulkImportRequest
+	DoubaoUpdateRequest     = app.DoubaoUpdateRequest
+	DoubaoBatchRequest      = app.DoubaoBatchRequest
+	DoubaoMarkFailedRequest = app.DoubaoMarkFailedRequest
+)
+
+// 网页中继账号池请求类型（实现在 internal/app/webrelay_bridge.go）。
+type (
+	WebRelayUpsertRequest        = app.WebRelayUpsertRequest
+	WebRelayTestRequest          = app.WebRelayTestRequest
+	WebRelayCaptureRequest       = app.WebRelayCaptureRequest
+	WebRelayBrowserImportRequest = app.WebRelayBrowserImportRequest
+	WebRelayUpdateRequest        = app.WebRelayUpdateRequest
+	WebRelayBatchRequest         = app.WebRelayBatchRequest
+)
+
+// 豆包生成请求类型。
+type (
+	DoubaoGenerateImageRequest = app.DoubaoGenerateImageRequest
+	DoubaoGenerateVideoRequest = app.DoubaoGenerateVideoRequest
+
+	NetworkProxyView          = app.NetworkProxyView
+	NetworkProxyUpsertRequest = app.NetworkProxyUpsertRequest
+	NetworkProxyAssignRequest = app.NetworkProxyAssignRequest
+	NetworkProxyTestResult    = app.NetworkProxyTestResult
+)

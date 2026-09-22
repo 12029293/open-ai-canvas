@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 31
+const CurrentSchemaVersion int64 = 35
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -104,6 +104,23 @@ var schemaMigrations = []migration{
 	}},
 	{version: 31, name: "tool_favorites", checksum: "sha256:tool-favorites-v31", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.ToolFavorite{})
+	}},
+	{version: 32, name: "doubao_account_pool", checksum: "sha256:doubao-account-pool-v32-20260920", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.DoubaoAccount{}, &model.DoubaoPoolMeta{})
+	}},
+	// v33 网络代理：代理表 + doubao_accounts 增加绑定字段（proxy_id / proxy_url）。
+	// AutoMigrate 对已存在的 doubao_accounts 只补缺失列，不动历史数据。
+	{version: 33, name: "network_proxies", checksum: "sha256:network-proxies-v33-20260920", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.NetworkProxy{}, &model.DoubaoAccount{})
+	}},
+	// v34 Dola 每日视频配额：doubao_accounts 增加当日计数与归属日期列。
+	// AutoMigrate 对已存在的 doubao_accounts 只补缺失列，不动历史数据。
+	{version: 34, name: "dola_daily_video_quota", checksum: "sha256:dola-daily-video-quota-v34-20260920", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.DoubaoAccount{})
+	}},
+	// v35 网页中继账号池：DeepSeek/千问网页版凭据（webrelay_accounts 表）。
+	{version: 35, name: "web_relay_account_pool", checksum: "sha256:web-relay-account-pool-v35-20260920", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.WebRelayAccount{})
 	}},
 }
 

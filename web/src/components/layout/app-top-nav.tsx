@@ -27,18 +27,6 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
 
     const isMobileViewport = () => window.innerWidth < 1024;
 
-    const toggleSidebar = () => {
-        if (isMobileViewport()) {
-            setMobileSidebarExpanded((current) => !current);
-            return;
-        }
-        setDesktopSidebarCollapsed((current) => {
-            const next = !current;
-            writeWorkspaceSidebarCollapsed(next);
-            return next;
-        });
-    };
-
     const expandDesktopSidebar = () => {
         setDesktopSidebarCollapsed(false);
         writeWorkspaceSidebarCollapsed(false);
@@ -104,7 +92,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         ) : null}
 
                         <div className="app-workspace-stage relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                            {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={isMobileViewport() ? mobileSidebarExpanded : !desktopSidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
+                            {showGlobalTopBar ? <WorkspaceTopBar /> : null}
                             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
                         </div>
                     </div>

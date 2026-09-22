@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -584,18 +585,18 @@ func (c *pluginRuntime) install(data []byte, fileName string) (PluginView, error
 	}
 	manifest := pkg.Manifest
 	if strings.HasPrefix(strings.TrimSpace(manifest.Runtime.Backend), "host:") {
-		return PluginView{}, errors.New("上传插件不能使用宿主内置执行器")
+		return PluginView{}, NewAppError(http.StatusBadRequest, "上传插件不能使用宿主内置执行器")
 	}
 	if len(manifest.Contributes.PaymentProviders) == 0 {
 		if _, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil); err != nil {
-			return PluginView{}, err
+			return PluginView{}, WrapAppError(http.StatusBadRequest, fmt.Sprintf("插件协议加载失败：%s", err), err)
 		}
 	}
 	c.mu.RLock()
 	existing, exists := c.plugins[manifest.Metadata.ID]
 	c.mu.RUnlock()
 	if exists && isBuiltInPluginSource(existing.Source) && !isPaymentPluginManifest(manifest) {
-		return PluginView{}, fmt.Errorf("内置插件 %q 不能通过上传覆盖", manifest.Metadata.ID)
+		return PluginView{}, NewAppError(http.StatusConflict, fmt.Sprintf("内置插件 %q 不能通过上传覆盖；该插件已随系统内置提供，请在插件中心直接使用", manifest.Metadata.ID))
 	}
 	manifest.Metadata.Enabled = !exists || existing.Metadata.Enabled
 	manifestData, err := json.Marshal(manifest)

@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/desktopui"
 	"infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 	"infinite-canvas/backend/internal/updaterclient"
+	"infinite-canvas/backend/internal/webui"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +35,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	dataDir := env("CANVAS_BACKEND_DATA_DIR", "data")
+	dataDir := env("CANVAS_BACKEND_DATA_DIR", defaultDataDir())
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
 	}
@@ -67,8 +69,21 @@ func run(ctx context.Context) error {
 	}
 
 	repo := repository.New(db)
-	addr := env("CANVAS_BACKEND_ADDR", ":8080")
+	addr := env("CANVAS_BACKEND_ADDR", desktopDefaultAddr)
 	svc := service.New(repo, dataDir)
+	// 本地单机模式：桌面版强制开启；服务端可用 CANVAS_LOCAL_MODE 显式开启。
+	localAuthMode := desktopBuild
+	if raw := strings.TrimSpace(os.Getenv("CANVAS_LOCAL_MODE")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("CANVAS_LOCAL_MODE 必须是 true 或 false")
+		}
+		localAuthMode = parsed
+	}
+	if localAuthMode {
+		svc.SetLocalAuthMode(true)
+		log.Printf("local auth mode enabled: all requests act as the built-in admin (no login required)")
+	}
 	if updaterToken := strings.TrimSpace(os.Getenv("CANVAS_UPDATER_TOKEN")); updaterToken != "" {
 		svc.ConfigureUpdateManager(updaterclient.New(env("CANVAS_UPDATER_SOCKET", "/run/open-ai-canvas-updater/updater.sock"), updaterToken))
 	}
@@ -115,7 +130,13 @@ func run(ctx context.Context) error {
 	registerSystemStatusRoutes(api, status)
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterCanvasAPI(api, svc)
-	r.NoRoute(handler.SystemProxyNoRouteHandler(svc))
+	// 桌面版优先托管内嵌前端；未打包前端时保持原有 API 代理兜底。
+	if dist, distErr := webui.Dist(); distErr == nil {
+		log.Printf("webui: serving embedded frontend")
+		r.NoRoute(webui.SPAHandler(dist, handler.SystemProxyNoRouteHandler(svc)))
+	} else {
+		r.NoRoute(handler.SystemProxyNoRouteHandler(svc))
+	}
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -133,11 +154,27 @@ func run(ctx context.Context) error {
 	status.markStarted()
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
-	log.Printf("backend listening on %s", addr)
+	displayURL := fmt.Sprintf("http://%s", listener.Addr())
+	log.Printf("backend listening on %s", displayURL)
+
+	// 桌面版：打开 WebView2 窗口（失败回退默认浏览器），窗口关闭即触发优雅退出。
+	// runCtx 在原 ctx（Ctrl+C 信号）基础上叠加"窗口已关闭"这一退出条件。
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	if desktopBuild {
+		go func() {
+			if err := desktopui.ShowWindow("影策工作台", displayURL); err != nil {
+				log.Printf("desktop window failed: %v (service still running at %s)", err, displayURL)
+				return
+			}
+			log.Printf("desktop window closed, shutting down")
+			runCancel()
+		}()
+	}
 
 	var serveFailure error
 	select {
-	case <-ctx.Done():
+	case <-runCtx.Done():
 	case err := <-serveErr:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveFailure = fmt.Errorf("HTTP 服务异常退出：%w", err)
@@ -226,6 +263,23 @@ func cors() (gin.HandlerFunc, error) {
 		return nil, err
 	}
 	return func(c *gin.Context) {
+		// 网页版凭据一键导入端点：书签脚本从网页版域名发起，跳过来源白名单，
+		// 把请求 Origin 原样反射回去（脚本不用凭据，无需 allow-credentials）。
+		if strings.HasSuffix(c.Request.URL.Path, "/webrelay-capture") {
+			origin := strings.TrimSpace(c.GetHeader("Origin"))
+			if origin != "" {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Vary", "Origin")
+			}
+			if c.Request.Method == "OPTIONS" {
+				c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type")
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+			c.Next()
+			return
+		}
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
 		if origin != "" && !allowedOriginWithPolicy(c, origin, policy) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "data": nil, "msg": "不允许的跨域来源"})

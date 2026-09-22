@@ -15,6 +15,10 @@ import (
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
+	// 豆包 / Dola 账号池不落渠道表；时长与比例边界由执行层钳制，这里不做 SKU 能力校验。
+	if isDoubaoPoolInterface(input.Config.InterfaceType) || IsAccountPoolChannel(input.Config.ChannelID) {
+		return nil
+	}
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		profile := input.Config.CapabilityConfig

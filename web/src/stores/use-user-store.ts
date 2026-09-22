@@ -52,10 +52,13 @@ export const defaultFeatureAvailability: FeatureAvailability = {
 type UserStore = {
     hydrated: boolean;
     user: LocalUser | null;
+    /** 本地单机模式（桌面 exe）：无登录/登出概念，会话断线时不跳登录页。 */
+    localMode: boolean;
     runtimeLimits: RuntimeLimits;
     drawingEngine: CanvasDrawingEngineSetting;
     features: FeatureAvailability;
     setUser: (user: LocalUser | null) => void;
+    setLocalMode: (localMode: boolean) => void;
     setRuntimeLimits: (limits?: RuntimeLimits) => void;
     setDrawingEngine: (setting?: CanvasDrawingEngineSetting) => void;
     setFeatures: (features?: FeatureAvailability) => void;
@@ -66,10 +69,12 @@ type UserStore = {
 export const useUserStore = create<UserStore>()((set) => ({
     hydrated: false,
     user: null,
+    localMode: false,
     runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 },
     drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE },
     features: defaultFeatureAvailability,
     setUser: (user) => set({ user }),
+    setLocalMode: (localMode) => set({ localMode }),
     setRuntimeLimits: (runtimeLimits) => set({ runtimeLimits: runtimeLimits || { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 } }),
     setDrawingEngine: (drawingEngine) => set({ drawingEngine: drawingEngine || { defaultEngine: DEFAULT_DRAWING_ENGINE } }),
     setFeatures: (features) => set({ features: features ? { ...defaultFeatureAvailability, ...features } : defaultFeatureAvailability }),

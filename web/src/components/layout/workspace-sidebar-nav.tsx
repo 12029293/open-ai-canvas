@@ -1,17 +1,19 @@
 import { Popover } from "antd";
-import { Bell, ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { Bell, ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Infinity as InfinityIcon, PanelLeftClose, Plus, Settings, ShieldCheck } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
 import { Kbd } from "@/components/ui/base/kbd";
+import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { useWorkspaceLogout } from "@/hooks/use-workspace-logout";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { cn } from "@/lib/utils";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
+import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type FeatureAvailability } from "@/stores/use-user-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { WorkspaceAccountCard } from "./workspace-account-card";
@@ -54,11 +56,17 @@ function buildNav(features: FeatureAvailability, isAdmin: boolean): { groups: Wo
             items: [{ ...toolItem("assets", "/assets"), title: "资产" }, { ...toolItem("skills", "/skills"), title: "技能" }, ...(features.pluginCenterEnabled || isAdmin ? [{ ...toolItem("plugins", "/plugins"), title: "插件" }] : [])],
         },
         ...(features.taskCenterEnabled ? [{ items: [{ ...toolItem("tasks", "/tasks"), title: "创作历史", icon: HistoryIcon }] }] : []),
+        {
+            items: [{ ...toolItem("accounts", "/accounts"), title: "账号池" }],
+        },
     ];
 
-    // 管理、设置和退出登录不再占据参考站式侧栏底部，而是通过用户卡片菜单进入。
-    // 路由和写操作仍保留，避免把用户端导航变成无法访问的装饰。
-    return { groups, footer: [] };
+    // 对齐极简版：收起轨底部是「管理(管理员)/设置」紧凑入口；账号入口走顶栏右上角账号菜单。
+    const footer: WorkspaceNavItem[] = [
+        ...(isAdmin ? [{ id: "admin", title: "管理员后台", icon: ShieldCheck, to: "/admin" }] : []),
+        { ...toolItem("settings", "/settings"), title: "设置" },
+    ];
+    return { groups, footer };
 }
 
 function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null }) {
@@ -70,8 +78,12 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
     useEffect(() => setFailed(false), [avatarUrl]);
 
     if (!user) {
-        return <Link to="/login" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="登录" title="登录"><CircleUserRound className="size-5" /><span>登录</span></Link>;
+        if (collapsed) return null;
+        return <Link to="/login" className="app-workspace-sidebar-profile" aria-label="登录" title="登录"><CircleUserRound className="size-5" /><span>登录</span></Link>;
     }
+
+    // 对齐极简版：收起轨底部不放签到/存储/头像集群，账号入口在顶栏右上角账号菜单。
+    if (collapsed) return null;
 
     const avatar = avatarUrl && !failed ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <CircleUserRound aria-hidden />;
     const content = <WorkspaceAccountCard onNavigate={() => setMenuOpen(false)} onWallet={() => { setMenuOpen(false); openWorkspaceWallet(); }} />;
@@ -95,13 +107,14 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
 
 function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onExpand: () => void; onCollapse: () => void }) {
     const appearance = useAppearanceStore((state) => state.appearance);
+    const theme = useThemeStore((state) => state.theme);
+    const setTheme = useThemeStore((state) => state.setTheme);
 
+    // 对齐极简版：收起轨顶部是主题切换按钮（展开侧栏走顶栏菜单按钮）。
     if (collapsed) {
         return (
             <div className="app-workspace-sidebar-rail-header shrink-0">
-                <button type="button" className="app-workspace-sidebar-rail-button" aria-label="展开侧栏菜单" title="展开侧栏菜单" onClick={onExpand}>
-                    <PanelLeftOpen className="size-4" strokeWidth={1.7} />
-                </button>
+                <AnimatedThemeToggler className="app-workspace-sidebar-rail-button" theme={theme} onThemeChange={setTheme} aria-label="切换主题" title="切换深浅模式" />
             </div>
         );
     }
@@ -120,6 +133,7 @@ function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { co
             <button type="button" className="app-workspace-sidebar-collapse-button" aria-label="收起侧栏" title="收起侧栏" onClick={onCollapse}>
                 <PanelLeftClose className="size-4" strokeWidth={1.7} />
             </button>
+            <AnimatedThemeToggler className="app-workspace-sidebar-collapse-button" theme={theme} onThemeChange={setTheme} aria-label="切换主题" title="切换深浅模式" />
         </div>
     );
 }
@@ -154,7 +168,7 @@ function NavItem({
     const Icon = item.icon;
     const rowStyle = collapsed ? undefined : ({ paddingLeft: `${level * 12 + 10}px` } as CSSProperties);
 
-    const collapsedTitle = item.id === "home" ? "创作" : item.id === "projects" ? "短剧" : item.id === "canvas" ? "画布" : item.id === "assets" ? "资产" : item.id === "skills" ? "技能" : item.id === "plugins" ? "插件" : item.id === "tasks" ? "历史" : item.title.slice(0, 2);
+    const collapsedTitle = item.id === "home" ? "创作" : item.id === "projects" ? "短剧" : item.id === "canvas" ? "画布" : item.id === "assets" ? "资产" : item.id === "accounts" ? "账号" : item.id === "skills" ? "技能" : item.id === "plugins" ? "插件" : item.id === "tasks" ? "历史" : item.title.slice(0, 2);
     const rowContent = (
         <>
             <span className="app-workspace-nav-main flex min-w-0 items-center gap-2.5">
@@ -327,7 +341,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
             </div>
             </LayoutGroup>
 
-            <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
+            <div className={cn("app-workspace-sidebar-footer shrink-0 py-3", collapsed ? "px-[5px]" : "px-3")}>
                 <WorkspaceSidebarProfile collapsed={collapsed} user={user} />
                 {footer.length ? <div className="mt-2 flex flex-col gap-0.5">
                     {footer.map((item) => (

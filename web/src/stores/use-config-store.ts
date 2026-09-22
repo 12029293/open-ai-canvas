@@ -585,6 +585,8 @@ function isAiConfigReady(config: AiConfig, model: string) {
         return Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && key.trim() && config.runningHub.workflowId.trim());
     }
     const channel = resolveModelChannel(config, model);
+    // 网页中继渠道没有 Base URL，凭据就是网页版 Token。
+    if (isWebRelayInterfaceType(channel.interfaceType)) return Boolean(model.trim() && channel.apiKey.trim());
     return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
 }
 
@@ -905,6 +907,14 @@ function isEmptyDefaultChannel(channel: ModelChannel) {
     return !channel.models.length || channel.models.every((model) => LEGACY_DEFAULT_MODEL_NAMES.has(modelOptionName(model)));
 }
 
+export function isWebRelayInterfaceType(value: string | undefined | null): value is "webrelay-deepseek" | "webrelay-qwen" {
+    return value === "webrelay-deepseek" || value === "webrelay-qwen";
+}
+
+export function webRelayPresetModels(interfaceType: "webrelay-deepseek" | "webrelay-qwen") {
+    return interfaceType === "webrelay-deepseek" ? ["deepseek-chat", "deepseek-reasoner"] : ["qwen3.7-plus", "qwen3.8-max", "qwen3.8-omni-flash"];
+}
+
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     return apiFormat === "gemini" ? GEMINI_BASE_URL : OPENAI_BASE_URL;
 }
@@ -917,6 +927,7 @@ export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfa
     if (interfaceType === "volcengine-jimeng-image" || interfaceType === "volcengine-jimeng-video") return "https://visual.volcengineapi.com";
     if (interfaceType === "minimax-video") return "https://api.minimaxi.com";
     if (interfaceType === "grok-image" || interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video") return "";
+    if (interfaceType === "webrelay-deepseek" || interfaceType === "webrelay-qwen") return "";
     return OPENAI_BASE_URL;
 }
 

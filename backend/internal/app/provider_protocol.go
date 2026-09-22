@@ -961,6 +961,20 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 }
 
 func (s *Service) validateGenerationInterface(mode string, interfaceType string) error {
+	// 豆包账号池是内置平台渠道，由 internal/doubao 直接执行，不经过协议插件注册表。
+	if isDoubaoPoolInterface(interfaceType) {
+		if mode != "" && doubaoPoolCapabilityForMode(mode) == "" {
+			return fmt.Errorf("豆包账号池不支持%s生成", mode)
+		}
+		return nil
+	}
+	// 网页中继渠道（DeepSeek/千问网页版）由 internal/webrelay 直接执行，只支持文本。
+	if isWebRelayInterface(interfaceType) {
+		if mode != "" && mode != "text" {
+			return fmt.Errorf("网页中继渠道不支持%s生成", mode)
+		}
+		return nil
+	}
 	return validateGenerationInterfaceWithRegistry(s.protocolRegistry(), mode, interfaceType)
 }
 

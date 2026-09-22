@@ -410,7 +410,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, errors.New("后端任务队列暂不支持该 Gemini 调用格式，请选择已安装的 Gemini 协议插件")
 		}
 	}
-	if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
+	// 网页中继与账号池渠道凭据来自账号池服务，任务配置不携带渠道密钥，只要求模型名。
+	if !isWebRelayInterface(input.Config.InterfaceType) && !isDoubaoPoolInterface(input.Config.InterfaceType) &&
+		(strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "") {
 		return nil, errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
 	}
 	if err := s.validateGenerationInterface(input.Mode, input.Config.InterfaceType); err != nil {
@@ -445,6 +447,10 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	}
 	switch input.Mode {
 	case "image":
+		// 豆包 / Dola 账号池由 internal/doubao 直接执行，不经过通用渠道 HTTP 栈。
+		if isDoubaoPoolInterface(input.Config.InterfaceType) {
+			return s.runDoubaoPoolImageTask(ctx, input)
+		}
 		return runImageTask(ctx, input)
 	case "text":
 		if input.AgentRequests != nil {
@@ -454,12 +460,30 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			}
 			return runAgentToolTask(ctx, input)
 		}
+		// 网页中继渠道（DeepSeek/千问网页版）由 internal/webrelay 直接执行。
+		// 中继结果同样要过模板输出契约校验：网页版偶尔只回标题等残缺内容，
+		// 不校验会让坏结果伪装成任务成功，最后由前端解析报错。
+		if isWebRelayInterface(input.Config.InterfaceType) {
+			result, relayErr := s.runWebRelayTextTask(ctx, input)
+			if relayErr == nil && promptTemplateOperation != "" {
+				relayErr = validatePromptTemplateResult(promptTemplateOperation, result)
+			}
+			return result, relayErr
+		}
 		result, taskErr := runTextTask(ctx, input)
 		if taskErr == nil && promptTemplateOperation != "" {
 			taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
 		}
 		return result, taskErr
 	case "video":
+		if isDoubaoPoolInterface(input.Config.InterfaceType) {
+			result, poolErr := s.runDoubaoPoolVideoTask(ctx, input)
+			if poolErr != nil {
+				// 会话轨迹落 task_logs：复盘「上游受理但不出片」卡在哪个环节。
+				s.logDoubaoVideoFailure(userID, ctx, poolErr)
+			}
+			return result, poolErr
+		}
 		return runVideoTask(ctx, input)
 	case "audio":
 		return runAudioTask(ctx, input)
@@ -702,6 +726,10 @@ func styleAssetSupportsModel(baseModels []string, generationModel string) bool {
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
+	// 豆包 / Dola 账号池不落渠道表；比例边界由执行层归一，这里不做 SKU 能力校验。
+	if isDoubaoPoolInterface(input.Config.InterfaceType) || IsAccountPoolChannel(input.Config.ChannelID) {
+		return nil
+	}
 	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
@@ -838,6 +866,23 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		return providerConfig{}, err
 	}
 	config.Headers = headers
+	// 豆包 / Dola 账号池凭据在账号池里，渠道不落表；清空出站凭据，
+	// 保留渠道 ID 供执行层区分站点与分发。
+	if isDoubaoPoolInterface(config.InterfaceType) || IsAccountPoolChannel(config.ChannelID) {
+		config.Headers = nil
+		config.APIKey = ""
+		config.SecretKey = ""
+		config.BaseURL = ""
+		return config, nil
+	}
+	// 网页中继渠道凭据在账号池里；渠道 ID 保持原样供后续分发识别。
+	if isWebRelayInterface(config.InterfaceType) || IsWebRelayChannel(config.ChannelID) {
+		config.Headers = nil
+		config.APIKey = ""
+		config.SecretKey = ""
+		config.BaseURL = ""
+		return config, nil
+	}
 	if isRunningHubInterface(config.InterfaceType) && strings.TrimSpace(config.BaseURL) == "" {
 		config.BaseURL = "https://www.runninghub.cn"
 	}

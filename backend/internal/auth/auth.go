@@ -46,6 +46,7 @@ type PublicAuthSettings struct {
 	LinuxDOEnabled      bool `json:"linuxdoEnabled"`
 	EmailEnabled        bool `json:"emailEnabled"`
 	EmailCodeRequired   bool `json:"emailCodeRequired"`
+	LocalMode           bool `json:"localMode"`
 }
 
 type AuthSessionResult struct {
@@ -68,7 +69,7 @@ func (s *Service) PublicAuthSettings() (*PublicAuthSettings, error) {
 		return nil, err
 	}
 	if count == 0 {
-		return &PublicAuthSettings{FirstUser: true, RegistrationEnabled: true, LinuxDOEnabled: false}, nil
+		return &PublicAuthSettings{FirstUser: true, RegistrationEnabled: true, LinuxDOEnabled: false, LocalMode: s.LocalMode()}, nil
 	}
 	registrationEnabled, err := s.RegistrationEnabled()
 	if err != nil {
@@ -78,7 +79,7 @@ func (s *Service) PublicAuthSettings() (*PublicAuthSettings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PublicAuthSettings{FirstUser: false, RegistrationEnabled: registrationEnabled, LinuxDOEnabled: s.LinuxDOEnabled(), EmailEnabled: emailEnabled, EmailCodeRequired: true}, nil
+	return &PublicAuthSettings{FirstUser: false, RegistrationEnabled: registrationEnabled, LinuxDOEnabled: s.LinuxDOEnabled(), EmailEnabled: emailEnabled, EmailCodeRequired: true, LocalMode: s.LocalMode()}, nil
 }
 
 func (s *Service) Register(req RegisterRequest) (*AuthSessionResult, error) {
@@ -203,6 +204,10 @@ func (s *Service) Logout(cookieValue string) error {
 }
 
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
+	// 本地单机模式：跳过会话校验，所有请求以内置管理员身份放行。
+	if s.LocalMode() {
+		return s.localAdminUser()
+	}
 	sessionID, token := parseSessionCookie(cookieValue)
 	if sessionID == "" || token == "" {
 		return nil, kernel.Unauthorized("请先登录")

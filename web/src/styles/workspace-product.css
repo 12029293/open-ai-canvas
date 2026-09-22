@@ -273,7 +273,7 @@
     --product-fast: 120ms;
     --product-state: 180ms;
     --product-enter: 360ms;
-    --product-content-max: 1480px;
+    --product-content-max: 1920px;
     --product-focus-ring: var(--control-focus-ring);
     --product-accent-blue: #4167bf;
     --product-accent-green: #287f65;
@@ -297,6 +297,13 @@
 .app-product-workspace [data-category="ecommerce"] { --category-accent: var(--product-accent-orange); }
 .app-product-workspace [data-category="creative"] { --category-accent: var(--product-accent-pink); }
 .app-product-workspace [data-category="social"] { --category-accent: var(--product-accent-green); }
+
+/* 顶部栏只为创作工作台的线程工具条存在（portal 挂载点）；扩展槽为空时
+   它只是一条约 64px 的空白带，把短剧 / 画布 / 资产等列表页的内容整体压低。
+   首页（is-creation-workspace）保持原有节奏不动。 */
+.app-workspace-shell:not(.is-creation-workspace) .app-workspace-topbar:has(.app-workspace-topbar-extension:empty) {
+    display: none;
+}
 
 .app-product-workspace .library-page > div,
 .app-product-workspace .studio-collection-page > div {
@@ -468,6 +475,8 @@
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-link.is-collapsed .app-workspace-nav-meta { display: none !important; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-group { gap: 6px; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-link { width: 54px !important; padding: 4px 0 !important; }
+/* 64px 收起轨：左右各 5px 边距，54px 链接恰好贴齐极简版的紧凑图标轨。 */
+.app-user-workspace .app-workspace-sidebar-scroll-area.is-collapsed { padding: 4px 5px 8px; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-main { width: 100%; align-items: center; justify-content: center; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-icon { width: 24px; height: 24px; flex-basis: 24px; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-link .app-workspace-nav-icon svg,

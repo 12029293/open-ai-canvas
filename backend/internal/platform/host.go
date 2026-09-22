@@ -8,7 +8,11 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-const TaskWorkerConcurrency = 3
+// TaskWorkerConcurrency 全局任务 worker 默认并发。
+// 原为 3：账号池场景下可用账号数往往大于 3，worker 会先于渠道并发成为瓶颈
+//（其余任务全部卡在「排队中」）。放大默认值，让并发主要由「渠道并发 = 账号数」
+// 决定；部署方仍可用 CANVAS_WORKER_CONCURRENCY 或运行时策略覆盖。
+const TaskWorkerConcurrency = 16
 
 // Host 由组合根注入，避免 platform → app 回环。
 type Host interface {

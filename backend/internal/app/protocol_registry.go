@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,13 +191,14 @@ func (s *Service) InstallPluginForAdmin(actor *model.User, data []byte, fileName
 	}
 	parsed, err := protocol.ParsePluginPackage(data)
 	if err != nil {
-		return PluginView{}, err
+		// 上传包校验失败属于调用方错误，必须把真实原因返回给前端，而不是落入 500 兜底。
+		return PluginView{}, WrapAppError(http.StatusBadRequest, fmt.Sprintf("插件包校验失败：%s", err), err)
 	}
 	if _, reserved := officialApplicationPolicies[parsed.Manifest.Metadata.ID]; reserved {
-		return PluginView{}, fmt.Errorf("插件 ID %q 由官方应用保留", parsed.Manifest.Metadata.ID)
+		return PluginView{}, NewAppError(http.StatusConflict, fmt.Sprintf("插件 ID %q 由官方应用保留", parsed.Manifest.Metadata.ID))
 	}
 	if _, reserved := systemPaymentPolicies[parsed.Manifest.Metadata.ID]; reserved && !isPaymentPluginManifest(parsed.Manifest) {
-		return PluginView{}, fmt.Errorf("插件 ID %q 由系统支付插件保留", parsed.Manifest.Metadata.ID)
+		return PluginView{}, NewAppError(http.StatusConflict, fmt.Sprintf("插件 ID %q 由系统支付插件保留", parsed.Manifest.Metadata.ID))
 	}
 	plugin, err := s.InstallPlugin(data, fileName)
 	if err != nil {

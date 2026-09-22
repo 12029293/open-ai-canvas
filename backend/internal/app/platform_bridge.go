@@ -54,6 +54,26 @@ func (h platformHost) ChannelConcurrencyLimit(channelID string) (int, error) {
 	if h.svc == nil {
 		return 0, nil
 	}
+	if IsDoubaoPoolChannel(channelID) || IsDolaPoolChannel(channelID) {
+		// 内置账号池渠道不落 system_channels：渠道并发 = 池内可用账号数，
+		// 实现「每个账号同时跑一个任务、依次轮换」；取号侧跳过占用中的账号。
+		pool := h.svc.doubaoPool()
+		limit := 0
+		if IsDolaPoolChannel(channelID) {
+			limit = pool.UsableCount("dola")
+		} else {
+			// doubao-pool 跨站点取号（豆包优先、Dola 兜底），额度按两站可用数之和。
+			limit = pool.UsableCount("doubao") + pool.UsableCount("dola")
+		}
+		if limit > platform.MaxChannelConcurrencyLimit {
+			limit = platform.MaxChannelConcurrencyLimit
+		}
+		return limit, nil
+	}
+	if IsWebRelayChannel(channelID) {
+		// 内置网页中继渠道同样没有独立并发配置，维持全局默认并发上限。
+		return 0, nil
+	}
 	channel, err := h.svc.repo.SystemChannel(channelID)
 	if err != nil {
 		return 0, err

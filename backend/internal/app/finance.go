@@ -443,6 +443,10 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		return nil, nil
 	}
 	channelID := strings.TrimSpace(fmt.Sprint(config["channelId"]))
+	// 豆包 / Dola 账号池与网页中继渠道使用用户自有账号，零成本，不进入计费。
+	if IsAccountPoolChannel(channelID) || IsWebRelayChannel(channelID) {
+		return nil, nil
+	}
 	if channelID == "" {
 		channelID = systemChannelIDFromBaseURL(fmt.Sprint(config["baseUrl"]))
 	}

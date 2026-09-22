@@ -72,3 +72,12 @@ camera_language_guide.md
 backend/cmd/server/server
 # One-off local probe scripts and their compiled output.
 backend/tmp_*
+
+# local build artifact
+/backend/server
+/.workbuddy/
+
+# 影策本地构建产物与临时文件（嫁接上游更新时保持忽略）
+/YingceDesktop.exe
+/web/._cache_tsc.exe
+/.local/upstream-ref/

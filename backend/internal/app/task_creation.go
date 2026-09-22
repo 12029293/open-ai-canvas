@@ -195,6 +195,11 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 // 显式系统渠道和用户自定义渠道请求不能被全局前台模型开关误判；
 // 它们仍分别进入系统目录校验或自定义渠道的功能、能力与安全校验。
 func (s *Service) resolveTaskModelSelection(input map[string]any, logicalModelID string, taskType string, operation string, frontendEnabled bool) (*RoutedModel, map[string]any, error) {
+	// 网页中继个人渠道（DeepSeek/千问网页版）没有系统渠道与 Base URL，
+	// 凭据随任务配置携带，模型校验延迟到执行层（runWebRelayTextTask）。
+	if taskInputUsesWebRelayChannel(input) {
+		return nil, input, nil
+	}
 	customChannelTask := taskInputUsesCustomChannel(input)
 	if frontendEnabled && !taskInputUsesSystemChannel(input) && !customChannelTask {
 		if logicalModelID == "" {
@@ -361,6 +366,31 @@ func (s *Service) resolveSystemChannelModelSelection(input map[string]any, taskT
 
 	channelID := strings.TrimSpace(stringValue(config["channelId"]))
 	modelKey := strings.TrimPrefix(strings.TrimSpace(stringValue(config["model"])), "models/")
+
+	// 网页中继渠道（DeepSeek/千问网页版）同属内置平台渠道，凭据来自账号池。
+	if IsWebRelayChannel(channelID) {
+		site, siteErr := webRelaySiteForChannelID(channelID)
+		if siteErr != nil {
+			return input, InvalidModelSelection(siteErr.Error())
+		}
+		next, err := s.resolveWebRelayModelSelection(site, config, taskType)
+		if err != nil {
+			return input, err
+		}
+		input["config"] = next
+		return input, nil
+	}
+
+	// 豆包 / Dola 账号池是内置平台渠道：凭据来自账号池而不是渠道表，
+	// 与网页中继一样必须走专用准入分支，不能落到下方 system_channels 查询。
+	if IsAccountPoolChannel(channelID) {
+		next, err := s.resolveDoubaoPoolModelSelection(channelID, config, taskType)
+		if err != nil {
+			return input, err
+		}
+		input["config"] = next
+		return input, nil
+	}
 
 	if channelID == "" || modelKey == "" {
 		return input, InvalidModelSelection("必须指定系统渠道和模型")
@@ -553,6 +583,19 @@ func taskInputUsesSystemChannel(input map[string]any) bool {
 	}
 	channelID, _ := config["channelId"].(string)
 	return strings.TrimSpace(channelID) != ""
+}
+
+// taskInputUsesWebRelayChannel 报告任务是否走网页中继个人渠道（凭据在任务配置里）。
+func taskInputUsesWebRelayChannel(input map[string]any) bool {
+	config, ok := input["config"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(stringValue(config["interfaceType"])) {
+	case WebRelayDeepSeekInterface, WebRelayQwenInterface:
+		return true
+	}
+	return false
 }
 
 func taskInputUsesWorkflowProvider(input map[string]any) bool {

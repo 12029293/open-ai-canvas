@@ -1,4 +1,4 @@
-import { configuredModelDisplayName, groupModelsByDisplayName, type DisplayModelGroup } from "@/lib/model-selection";
+import { groupModelsByDisplayName, type DisplayModelGroup } from "@/lib/model-selection";
 import { modelIcon, modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 
 export type ModelPickerGroup = {
@@ -23,34 +23,22 @@ export function modelChannelLabel(config: AiConfig, value: string) {
     return cost?.channelLabel?.trim() || channel.name || "未命名渠道";
 }
 
-// 一级按模型展示名跨渠道聚合；二级保留每条渠道模型的独立选择值、能力和售价。
+// 一级按渠道聚合（品牌 = 渠道名，如 豆包账号池 / Dola账号池），二级列渠道内模型。
+// 与极简版一致：平台内置渠道统一展示「平台服务」，不再把渠道内每个模型拆成独立品牌。
 export function groupModelsForPicker(config: AiConfig, options: string[]): ModelPickerGroup[] {
     const groups = new Map<string, ModelPickerGroup>();
     for (const channel of config.channels) {
         const models = options.filter((value) => resolveModelChannel(config, value).id === channel.id);
-        const directModels = models.filter((value) => isDirectSystemModel(config, value));
-        for (const value of directModels) {
-            const label = configuredModelDisplayName(config, value);
-            const key = JSON.stringify(["product", label]);
-            let group = groups.get(key);
-            if (!group) {
-                group = { key, label, icon: modelIcon(config, value), scope: "平台服务", kind: "product", models: [] };
-                groups.set(key, group);
-            }
-            group.models.push({ key: value, label: modelChannelLabel(config, value), models: [value] });
-        }
-        const otherModels = models.filter((value) => !isDirectSystemModel(config, value));
-        if (otherModels.length) {
-            const key = JSON.stringify(["channel", channel.id]);
-            groups.set(key, {
-                key,
-                label: channel.name || "未命名渠道",
-                icon: modelIcon(config, otherModels[0]),
-                scope: channel.id === PUBLIC_MODEL_CATALOG_ID ? "" : "我的模型",
-                kind: "channel",
-                models: groupModelsByDisplayName(config, otherModels),
-            });
-        }
+        if (!models.length) continue;
+        const key = JSON.stringify(["channel", channel.id]);
+        groups.set(key, {
+            key,
+            label: channel.name || "未命名渠道",
+            icon: modelIcon(config, models[0]),
+            scope: channel.id === PUBLIC_MODEL_CATALOG_ID ? "" : channel.scope === "system" ? "平台服务" : "我的模型",
+            kind: "channel",
+            models: groupModelsByDisplayName(config, models),
+        });
     }
     return Array.from(groups.values());
 }

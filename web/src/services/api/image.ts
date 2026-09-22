@@ -1,4 +1,5 @@
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -15,6 +16,28 @@ import { normalizeGrokImageResolution, normalizeQuality, normalizeVolcengineArkI
 import { parseGeminiImagePayload, parseImagePayload, readAxiosError } from "@/services/api/image-response";
 import { toChatCompletionMessages, toChatCompletionToolChoice, toClaudeBody, toGeminiBody, toGeminiToolOptions, toResponseInput, toResponseTool, withSystemMessage } from "@/services/api/image-protocols";
 import { requestGeminiStreamingResponse, requestStreamingChatCompletion, requestStreamingClaude, requestStreamingResponse } from "@/services/api/image-streaming";
+import { generateDoubaoImage } from "@/services/api/doubao-accounts";
+
+/** 豆包返回的是 CDN 图片 URL，画布需要 dataUrl，这里拉取后转码。 */
+async function doubaoUrlToImageResults(urls: string[]) {
+    const images = await Promise.all(
+        urls.map(async (url) => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`豆包图片下载失败 HTTP ${response.status}`);
+            const blob = await response.blob();
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(new Error("豆包图片转码失败"));
+                reader.readAsDataURL(blob);
+            });
+            return { id: nanoid(), dataUrl };
+        }),
+    );
+    if (!images.length) throw new Error("豆包没有返回图片");
+    return images;
+}
+
 export { buildBackendToolRequests } from "@/services/api/image-protocols";
 export type { AiTextContentPart, AiTextMessage, ResponseFunctionTool, ResponseInputMessage, ResponseToolCall, ToolChoice, ToolResponseResult } from "@/services/api/image-contracts";
 
@@ -62,6 +85,16 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     validateImageCapability(imageProfile, []);
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
+    if (requestConfig.interfaceType === "doubao-pool") {
+        // 豆包账号池：文生图走本地后端 samantha 协议，账号自动轮换。
+        try {
+            const ratio = normalizedImage.size && normalizedImage.size !== "auto" ? normalizedImage.size : "1:1";
+            const result = await generateDoubaoImage({ prompt, ratio, model: requestConfig.model });
+            return await doubaoUrlToImageResults(result.urls);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "豆包生图失败"));
+        }
+    }
     if (requestConfig.interfaceType === "gemini-image") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
@@ -139,6 +172,17 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
+    if (requestConfig.interfaceType === "doubao-pool") {
+        if (mask) throw new Error("豆包账号池通道暂不支持蒙版编辑，请移除蒙版后重试");
+        if (references.length) throw new Error("豆包账号池通道暂只支持文生图，图生图将在后续接入参考图协议");
+        try {
+            const ratio = normalizedImage.size && normalizedImage.size !== "auto" ? normalizedImage.size : "1:1";
+            const result = await generateDoubaoImage({ prompt, ratio, model: requestConfig.model });
+            return await doubaoUrlToImageResults(result.urls);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "豆包生图失败"));
+        }
+    }
     if (requestConfig.interfaceType === "gemini-image") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {

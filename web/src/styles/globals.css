@@ -1608,7 +1608,7 @@
         --workspace-nav-active-hover-bg: rgba(17, 17, 17, 0.11);
         --workspace-sidebar-width: 312px;
         --workspace-sidebar-nav-width: 312px;
-        --workspace-sidebar-collapsed-width: 86px;
+        --workspace-sidebar-collapsed-width: 64px;
         --workspace-shell-gutter: 0px;
         --workspace-card-gap: 0px;
         --workspace-topbar-height: 56px;
@@ -15102,11 +15102,11 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
 
 /* ===== 2026-09 user workspace alignment =====
    这一组规则只作用于真实用户端壳层和首页，后台与画布编辑器保持原有职责和交互。
-   几何基准：侧栏 216px、顶部 64px、导航行 44px、首页内容最大宽度 1180px。 */
+   几何基准：侧栏 216px、顶部 48px、导航行 44px、首页内容最大宽度 1180px。 */
 .app-user-workspace {
     --workspace-reference-sidebar: 216px;
     --workspace-reference-collapsed: 70px;
-    --workspace-reference-topbar: 64px;
+    --workspace-reference-topbar: 48px;
     --workspace-reference-row: 44px;
     --workspace-reference-page-bg: #ffffff;
     background: var(--workspace-reference-page-bg);
@@ -15997,7 +15997,7 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
 }
 
 .app-user-workspace .app-workspace-mobile-menu {
-    display: none;
+    display: grid;
 }
 
 /* 首页：把视觉重心从装饰图改到标题、模式切换和真实 Composer。 */

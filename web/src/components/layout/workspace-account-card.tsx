@@ -11,6 +11,7 @@ import "./workspace-account-card.css";
 export function WorkspaceAccountCard({ onWallet, onNavigate }: { onWallet: () => void; onNavigate: () => void }) {
     const user = useUserStore((state) => state.user);
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const localMode = useUserStore((state) => state.localMode);
     const { availableMicrocredits, refreshing, refresh } = useWalletBalance(user?.id, creditsEnabled);
     const { handleLogout, loggingOut } = useWorkspaceLogout();
     if (!user) return null;
@@ -27,7 +28,7 @@ export function WorkspaceAccountCard({ onWallet, onNavigate }: { onWallet: () =>
         <nav className="workspace-account-card-actions" aria-label="账户操作">
             <Link to="/settings" onClick={onNavigate}><Settings /><span>账户与设置</span><ArrowUpRight /></Link>
             {user.role === "admin" ? <Link to="/admin" onClick={onNavigate}><ShieldCheck /><span>管理员后台</span><ArrowUpRight /></Link> : null}
-            <Button danger type="text" icon={<LogOut />} loading={loggingOut} onClick={() => void handleLogout()}>退出登录</Button>
+            {localMode ? null : <Button danger type="text" icon={<LogOut />} loading={loggingOut} onClick={() => void handleLogout()}>退出登录</Button>}
         </nav>
     </section>;
 }

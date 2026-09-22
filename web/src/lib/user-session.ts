@@ -43,6 +43,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         const persistedCreationPreferences = scopedLocalStorage.getItem(CREATION_PREFERENCES_STORE_KEY);
         usePluginStore.setState({ hydrated: false, runtimeStatuses: {}, pluginStates: {} });
         useUserStore.getState().setUser(payload.user);
+        useUserStore.getState().setLocalMode(Boolean(payload.localMode));
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);
@@ -94,9 +95,166 @@ export async function refreshSystemChannels() {
 function modelCatalogChannels(catalog: ModelCatalogResponse): ModelChannel[] {
     if (catalog.source === "system") {
         if (!Array.isArray(catalog.channels)) throw new Error("模型目录响应缺少系统渠道列表");
-        return systemChannelModelChannels(catalog.channels);
+        // 豆包 / Dola 账号池通道永远可用且排在最前：未配置任何渠道时，
+        // 文生图 / 文生视频默认选中豆包（normalizeSelectedModel 回退到 options[0]）。
+        return [doubaoPoolChannel(), dolaPoolChannel(), ...systemChannelModelChannels(catalog.channels)];
     }
     throw new Error("模型目录响应来源无效");
+}
+
+export const DOUBAO_POOL_CHANNEL_ID = "doubao-pool";
+export const DOUBAO_IMAGE_MODEL = "doubao-seedream-image";
+export const DOUBAO_VIDEO_MODEL_MINI = "doubao-seedance-video-mini";
+export const DOUBAO_VIDEO_MODEL_FAST = "doubao-seedance-video-fast";
+/** 历史默认视频模型键（等价 Mini），仅用于旧配置兼容。 */
+export const DOUBAO_VIDEO_MODEL = DOUBAO_VIDEO_MODEL_MINI;
+
+export const DOLA_POOL_CHANNEL_ID = "dola-pool";
+export const DOLA_VIDEO_MODEL_1_0 = "dola-seedance-video-1.0";
+export const DOLA_VIDEO_MODEL_2_5 = "dola-seedance-video-2.5";
+export const DOLA_VIDEO_MODEL_FAST = "dola-seedance-video-fast";
+
+/**
+ * 豆包视频模型能力：按 2026-09-19 账号池限制表收口——
+ * 单次 15 秒、上限 5 条、720P、多参考图。
+ * 其余能力字段沿用全局默认，避免部分字段缺失导致归一化崩溃。
+ */
+function doubaoPoolVideoCapabilityConfig(): ModelCapabilityConfig {
+    const config = defaultModelCapabilityConfig();
+    if (!config.video) return config;
+    return {
+        ...config,
+        video: {
+            ...config.video,
+            duration: { ...config.video.duration, min: 1, max: 15 },
+            resolutions: ["720p"],
+            defaultResolution: "720p",
+            maxOutputs: 5,
+            referenceMode: "multi",
+            operations: Array.from(new Set([...(config.video.operations || ["text_to_video", "image_to_video"]), "reference_to_video"])),
+            references: { ...config.video.references, maxImages: 4 },
+        },
+    };
+}
+
+/**
+ * Dola 视频模型能力：单次 4-30 秒、上限 2 条、720P、多参考图。
+ * defaultSeconds 用于 2.5 档固定 30 秒默认时长；其余档位沿用全局默认。
+ */
+function dolaPoolVideoCapabilityConfig(defaultSeconds?: number): ModelCapabilityConfig {
+    const config = defaultModelCapabilityConfig();
+    if (!config.video) return config;
+    const duration: NonNullable<ModelCapabilityConfig["video"]>["duration"] = { ...config.video.duration, min: 4, max: 30 };
+    if (defaultSeconds) duration.default = Math.min(defaultSeconds, 30);
+    return {
+        ...config,
+        video: {
+            ...config.video,
+            duration,
+            resolutions: ["720p"],
+            defaultResolution: "720p",
+            maxOutputs: 2,
+            referenceMode: "multi",
+            operations: Array.from(new Set([...(config.video.operations || ["text_to_video", "image_to_video"]), "reference_to_video"])),
+            references: { ...config.video.references, maxImages: 4 },
+        },
+    };
+}
+
+/** 内置「豆包账号池」系统渠道：不需要 API Key，凭据来自账号池。 */
+function doubaoPoolChannel(): ModelChannel {
+    return {
+        id: DOUBAO_POOL_CHANNEL_ID,
+        name: "豆包账号池",
+        baseUrl: "/api",
+        apiKey: "pool",
+        apiFormat: "openai",
+        interfaceType: "doubao-pool",
+        scope: "system",
+        enabled: true,
+        models: [DOUBAO_IMAGE_MODEL, DOUBAO_VIDEO_MODEL_MINI, DOUBAO_VIDEO_MODEL_FAST],
+        modelAliases: {},
+        modelCosts: [
+            {
+                model: DOUBAO_IMAGE_MODEL,
+                displayName: "豆包生图（Seedream）",
+                description: "文生图默认走豆包账号池，自动取号轮换。",
+                capability: "image",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: defaultModelCapabilityConfig(),
+            },
+            {
+                model: DOUBAO_VIDEO_MODEL_MINI,
+                displayName: "豆包生视频 Mini（Seedance 2.0）",
+                description: "Seedance 2.0 Mini 档，走豆包账号池，自动取号轮换。",
+                capability: "video",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: doubaoPoolVideoCapabilityConfig(),
+            },
+            {
+                model: DOUBAO_VIDEO_MODEL_FAST,
+                displayName: "豆包生视频 Fast（Seedance 2.0）",
+                description: "Seedance 2.0 Fast 档，出片更快，走豆包账号池。",
+                capability: "video",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: doubaoPoolVideoCapabilityConfig(),
+            },
+        ],
+    };
+}
+
+/** 内置「Dola 账号池」系统渠道：与豆包账号池同一套 samantha 协议，仅站点不同。 */
+function dolaPoolChannel(): ModelChannel {
+    return {
+        id: DOLA_POOL_CHANNEL_ID,
+        name: "Dola账号池",
+        baseUrl: "/api",
+        apiKey: "pool",
+        apiFormat: "openai",
+        interfaceType: "doubao-pool",
+        scope: "system",
+        enabled: true,
+        models: [DOLA_VIDEO_MODEL_1_0, DOLA_VIDEO_MODEL_2_5, DOLA_VIDEO_MODEL_FAST],
+        modelAliases: {},
+        modelCosts: [
+            {
+                model: DOLA_VIDEO_MODEL_1_0,
+                displayName: "Dola生视频 1.0（Seedance 1.0）",
+                description: "Seedance 1.0 档，单次≤30s · 每日2条（跨天自动恢复），走 Dola 账号池。",
+                capability: "video",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: dolaPoolVideoCapabilityConfig(),
+            },
+            {
+                model: DOLA_VIDEO_MODEL_2_5,
+                displayName: "Dola生视频 2.5（Seedance 2.5）",
+                description: "Seedance 2.5 档，单条 30 秒 · 每日 2 条（跨天自动恢复），走 Dola 账号池。",
+                capability: "video",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: dolaPoolVideoCapabilityConfig(30),
+            },
+            {
+                model: DOLA_VIDEO_MODEL_FAST,
+                displayName: "Dola生视频 Fast（Seedance 2.0）",
+                description: "Seedance 2.0 Fast 档，单次≤30s · 每日2条（跨天自动恢复），走 Dola 账号池。",
+                capability: "video",
+                pricePolicy: "channel",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: dolaPoolVideoCapabilityConfig(),
+            },
+        ],
+    };
 }
 
 // 系统渠道模型转换为前端配置格式

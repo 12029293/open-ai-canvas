@@ -12,6 +12,7 @@ import (
 
 	"infinite-canvas/backend/internal/auth"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/doubao"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/payment"
@@ -20,6 +21,7 @@ import (
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 	"infinite-canvas/backend/internal/tools"
+	"infinite-canvas/backend/internal/webrelay"
 )
 
 type Service struct {
@@ -72,6 +74,11 @@ type Service struct {
 	prompts                  *prompts.Service
 	auth                     *auth.Service
 	canvas                   *canvas.Service
+	doubaoMu                 sync.Mutex
+	doubaoPoolSvc            *doubao.Service
+	doubaoQrSvcs             map[string]*doubao.QRLoginManager
+	webrelayMu               sync.Mutex
+	webrelaySvc              *webrelay.Service
 }
 
 const taskWorkerConcurrency = 3

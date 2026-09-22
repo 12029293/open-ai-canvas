@@ -15,6 +15,7 @@ import { createVideoGenerationsTask, pollVideoGenerationsTask } from "./video-pr
 import { createNovitaVideoTask, pollNovitaVideoTask } from "./video-provider-novita";
 import { createOpenAIVideoTask, pollOpenAIVideoTask } from "./video-provider-openai";
 import { createSeedanceTask, isSeedanceConfig, pollSeedanceTask } from "./video-provider-seedance";
+import { createDoubaoVideoTask, pollDoubaoVideoTask } from "./video-provider-doubao";
 import { createVideoTransport } from "./video-transport";
 
 export type { VideoGenerationResult, VideoGenerationTask, VideoGenerationTaskState } from "./video-contracts";
@@ -39,6 +40,10 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     assertVideoConfig(requestConfig, requestConfig.model);
     assertVideoCapability(modelCapabilityConfigFor(config, selectedModel).video!, references, videoReferences, audioReferences, config.videoSeconds);
     const deps: VideoProviderDeps = { transport: createVideoTransport(requestConfig), response: videoResponseTools };
+    if (requestConfig.interfaceType === "doubao-pool") {
+        if (videoReferences.length || audioReferences.length) throw new Error("豆包账号池通道暂不支持参考视频 / 参考音频");
+        return createDoubaoVideoTask(requestConfig, prompt, config.videoSeconds);
+    }
     if (requestConfig.interfaceType === "newapi-channel-2") return createVideoGenerationsTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (requestConfig.interfaceType === "gemini-veo") return createGeminiVeoTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (requestConfig.interfaceType === "novita-video") return createNovitaVideoTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
@@ -59,6 +64,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     if (task.provider === "minimax") return pollMiniMaxVideoTask(deps, requestConfig, task, options);
     if (task.provider === "agnes") return pollAgnesVideoTask(deps, requestConfig, task, options);
     if (task.provider === "seedance") return pollSeedanceTask(deps, requestConfig, task, options);
+    if (task.provider === "doubao-pool") return pollDoubaoVideoTask(task);
     return pollOpenAIVideoTask(deps, task, options);
 }
 

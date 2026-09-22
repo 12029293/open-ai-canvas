@@ -41,7 +41,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 
 import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
-import { publishWorkspaceSidebarCollapsed, readWorkspaceSidebarCollapsed, subscribeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
+import { publishAdminSidebarCollapsed, readAdminSidebarCollapsed, subscribeAdminSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -120,7 +120,7 @@ function adminPopupContainer(node?: HTMLElement) {
 
 export function AdminShell() {
     const appearance = useAppearanceStore((state) => state.appearance);
-    const [collapsed, setCollapsed] = useState(readWorkspaceSidebarCollapsed);
+    const [collapsed, setCollapsed] = useState(readAdminSidebarCollapsed);
     const dark = useThemeStore((state) => state.theme === "dark");
 
     useEffect(() => {
@@ -129,13 +129,13 @@ export function AdminShell() {
     }, []);
 
     useEffect(() => {
-        return subscribeWorkspaceSidebarCollapsed(setCollapsed);
+        return subscribeAdminSidebarCollapsed(setCollapsed);
     }, []);
 
     const toggleCollapsed = () => {
         const next = !collapsed;
         setCollapsed(next);
-        publishWorkspaceSidebarCollapsed(next);
+        publishAdminSidebarCollapsed(next);
     };
 
     return (

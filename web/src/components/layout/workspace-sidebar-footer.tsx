@@ -30,6 +30,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
     const navigate = useNavigate();
     const { message } = App.useApp();
     const [menuOpen, setMenuOpen] = useState(false);
+    const localMode = useUserStore((state) => state.localMode);
     const { availableMicrocredits } = useWalletBalance(user?.id, creditsEnabled);
     const balance = availableMicrocredits === null
         ? "--"
@@ -91,7 +92,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                 <span className="ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
                                 <Switch size="sm" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
                             </div>
-                            <button type="button" className="flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-surface-hover hover:text-foreground" onClick={() => void handleLogout()}><LogOut className="size-3.5" />退出登录</button>
+                            {localMode ? null : <button type="button" className="flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-surface-hover hover:text-foreground" onClick={() => void handleLogout()}><LogOut className="size-3.5" />退出登录</button>}
                         </div>
                     )}
                 >

@@ -733,6 +733,11 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	if taskInput.Mode == "audio" {
 		return nil
 	}
+	// 豆包 / Dola 账号池不落渠道表，能力边界由准入（模型键匹配）和执行层
+	//（时长钳制、比例归一）共同兜底，不走 channel_models 能力配置校验。
+	if IsAccountPoolChannel(taskInput.Config.ChannelID) || isDoubaoPoolInterface(taskInput.Config.InterfaceType) {
+		return nil
+	}
 	channelID := strings.TrimSpace(taskInput.Config.ChannelID)
 	if channelID == "" {
 		channelID = systemChannelIDFromBaseURL(taskInput.Config.BaseURL)

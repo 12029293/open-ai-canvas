@@ -64,6 +64,11 @@ func (r *Repository) Dialect() string {
 	return r.db.Dialector.Name()
 }
 
+// DB 暴露底层 gorm 句柄，仅供确需自定义查询的域（如豆包账号池）使用。
+func (r *Repository) DB() *gorm.DB {
+	return r.db
+}
+
 func (r *Repository) ReleaseTaskLease(id string, owner string) error {
 	return r.db.Model(&model.Task{}).
 		Where("id = ? AND status = ? AND lease_owner = ?", id, model.TaskStatusRunning, owner).

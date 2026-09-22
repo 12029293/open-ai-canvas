@@ -116,7 +116,9 @@ func DefaultRuntimePolicy() RuntimePolicySetting {
 		Task: RuntimeTaskPolicy{
 			WorkerConcurrency:        effectiveChannelConcurrencyLimit(envInt("CANVAS_WORKER_CONCURRENCY", TaskWorkerConcurrency)),
 			ChannelConcurrency:       defaultChannelConcurrencyLimit(),
-			ActiveTaskLimit:          5,
+			// 活动任务上限原为 5：批量出片（每账号一任务）很容易超过，
+			// 放大默认值让排队队列只受账号数约束；仍可在运行时策略调整。
+			ActiveTaskLimit:          50,
 			ImageTimeoutMinutes:      8,
 			TextTimeoutMinutes:       8,
 			AudioTimeoutMinutes:      8,

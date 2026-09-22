@@ -92,6 +92,12 @@ export type VideoCapabilityConfig = {
     watermark: { supported: boolean; default: boolean };
     operations: string[];
     defaultOperation: string;
+    /** 单次生成的视频条数上限（账号池限额）；缺省表示不限制。 */
+    maxOutputs?: number;
+    /** 参考图模式：multi = 多参考图；first_last = 首尾帧参考。用于选择器与参数面板提示。 */
+    referenceMode?: "multi" | "first_last";
+    /** 账号池的附加限额说明（例如“累计上限 33 秒”）。 */
+    limitNote?: string;
 };
 
 // 旧版本的“允许自定义”可能只保存了 `*`，前台需要用这组标准值恢复可选项。
@@ -294,7 +300,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
     return image;
 }
 
-export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
+export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "", channelName = ""): ModelCapabilityConfig {
     const text: TextCapabilityConfig = {
         streaming: true,
         contextWindowTokens: 128_000,
@@ -383,7 +389,76 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.defaultResolution = "720P";
         video.operations.push("reference_to_video", "audio_to_video");
     }
+    // 账号池（渠道）维度的参数限制：时长上限、720P、条数上限与参考图模式。
+    // 作为兜底默认值合并；管理员在渠道上显式配置的 capabilityConfig 仍然优先。
+    applyAccountPoolVideoLimits(video, channelName, model);
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
+}
+
+// 账号池（渠道）维度的模型参数限制。同一模型在不同账号池中的限额可能不同，
+// 因此先按渠道名匹配账号池，再按模型名取该池的限额。
+export type AccountPoolVideoLimit = {
+    maxSeconds: number;
+    maxVideos?: number;
+    referenceMode?: "multi" | "first_last";
+    note?: string;
+};
+
+function accountPoolKey(channelName: string): "jimeng" | "doubao" | "dola" | "" {
+    const name = String(channelName || "").toLowerCase();
+    if (name.includes("即梦") || name.includes("jimeng")) return "jimeng";
+    if (name.includes("豆包") || name.includes("doubao")) return "doubao";
+    if (name.includes("dola")) return "dola";
+    return "";
+}
+
+export function accountPoolVideoLimits(channelName: string, model: string): AccountPoolVideoLimit | undefined {
+    const pool = accountPoolKey(channelName);
+    if (!pool) return undefined;
+    const value = String(model || "").toLowerCase();
+    const isFast = value.includes("fast");
+    if (pool === "jimeng") {
+        if (value.includes("seedance1.5")) return { maxSeconds: 6, referenceMode: "first_last" };
+        if (value.includes("seedance1") && isFast) return { maxSeconds: 10, note: "累计上限 33 秒" };
+        return undefined;
+    }
+    if (pool === "doubao") {
+        if (value.includes("seedance2")) return { maxSeconds: 15, maxVideos: 5, referenceMode: "multi" };
+        return undefined;
+    }
+    // dola 池：seedance1.0 与 seedance2.0 Fast 同为单次 30 秒、上限 2 条。
+    if (value.includes("seedance")) return { maxSeconds: 30, maxVideos: 2, referenceMode: "multi", note: "每日上限 2 条 · 跨天自动恢复" };
+    return undefined;
+}
+
+function applyAccountPoolVideoLimits(video: VideoCapabilityConfig, channelName: string, model: string) {
+    const limit = accountPoolVideoLimits(channelName, model);
+    if (!limit) return;
+    video.duration = { selection: "range", min: 1, max: limit.maxSeconds, step: 1, default: Math.min(video.duration.default, limit.maxSeconds) };
+    video.resolutions = ["720p"];
+    video.defaultResolution = "720p";
+    if (limit.maxVideos) video.maxOutputs = limit.maxVideos;
+    if (limit.referenceMode === "first_last") video.references.maxImages = Math.min(video.references.maxImages, 2);
+    if (limit.referenceMode) video.referenceMode = limit.referenceMode;
+    if (limit.note) video.limitNote = limit.note;
+}
+
+/** 面向选择器与参数面板的账号池限额摘要，例如“单次≤15s · 上限5条 · 720P · 多参考图”。 */
+export function videoLimitSummary(profile: VideoCapabilityConfig) {
+    const parts: string[] = [];
+    if (profile.duration.selection === "enum") {
+        const values = profile.duration.values || [];
+        if (values.length) parts.push(`单次 ${values.map((value) => `${value}s`).join("/")}`);
+    } else if (profile.duration.max) {
+        parts.push(`单次≤${profile.duration.max}s`);
+    }
+    if (profile.maxOutputs) parts.push(`上限${profile.maxOutputs}条`);
+    const resolutions = profile.resolutions.map((item) => item.trim().toUpperCase()).filter(Boolean);
+    if (resolutions.length === 1) parts.push(resolutions[0]);
+    if (profile.referenceMode === "multi") parts.push("多参考图");
+    if (profile.referenceMode === "first_last") parts.push("首尾帧参考");
+    if (profile.limitNote) parts.push(profile.limitNote);
+    return parts.join(" · ");
 }
 
 export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow: ModelProtocolWorkflow): ModelCapabilityConfig | undefined {
@@ -402,13 +477,13 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
     return { ...fallback, video: workflowVideoCapabilityConfig(fields, fallback.video!) };
 }
 
-export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; models: string[]; modelCosts?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
+export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; name?: string; models: string[]; modelCosts?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
     const separator = model.indexOf("::");
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
     const channel = config.channels.find((item) => item.id === channelId) || config.channels.find((item) => item.models.includes(modelName));
     const cost = channel?.modelCosts?.find((item) => item.model === modelName);
-    const fallback = defaultModelCapabilityConfig(cost?.protocol, modelName);
+    const fallback = defaultModelCapabilityConfig(cost?.protocol, modelName, channel?.name || "");
     if (!cost?.capabilityConfig) return fallback;
     const capabilityConfig = normalizeModelCapabilityConfig(cost.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;

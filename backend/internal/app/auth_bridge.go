@@ -140,6 +140,22 @@ func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
 	return s.authDomain().CurrentUser(cookieValue)
 }
 
+// SetLocalAuthMode 开启本地单机模式（桌面 exe 专用），见 auth.Service.SetLocalMode。
+func (s *Service) SetLocalAuthMode(enabled bool) {
+	if s == nil || s.auth == nil {
+		return
+	}
+	s.auth.SetLocalMode(enabled)
+}
+
+// LocalAuthMode 返回本地单机模式状态，随 /auth/session 下发给前端。
+func (s *Service) LocalAuthMode() bool {
+	if s == nil {
+		return false
+	}
+	return s.authDomain().LocalMode()
+}
+
 func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {
 	return s.authDomain().PublicAuthUser(user)
 }

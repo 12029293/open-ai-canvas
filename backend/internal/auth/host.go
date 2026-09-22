@@ -51,6 +51,10 @@ type Service struct {
 	mailSender     func(EmailSettingValue, string, string, string) error
 	emailCodeMu    sync.Mutex
 	registrationMu sync.Mutex
+	// 本地单机模式（桌面 exe）专用：所有请求自动视为内置管理员。
+	localMode bool
+	localMu   sync.Mutex
+	localUser *model.User
 }
 
 func New(repo *repository.Repository, host Host, mailSender func(EmailSettingValue, string, string, string) error) *Service {

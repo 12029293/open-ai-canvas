@@ -7,6 +7,9 @@ import { getAuthSession, getAuthSettings, linuxDOLoginURL, login } from "@/servi
 import { useUserStore } from "@/stores/use-user-store";
 import { LinuxDOIcon } from "./auth-scene";
 
+// 后端冷启动时该请求会失败：按退避间隔重试直到拿到配置（合计约 25 秒）。
+const AUTH_SETTINGS_RETRY_DELAYS_MS = [1500, 3000, 5000, 8000, 8000];
+
 export default function LoginPage() {
     const navigate = useNavigate();
     const [params] = useSearchParams();
@@ -15,6 +18,7 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [linuxdoEnabled, setLinuxdoEnabled] = useState(false);
+    const [localMode, setLocalMode] = useState(useUserStore.getState().localMode);
     const next = safeNext(params.get("next"));
     const forgotPasswordURL = `/forgot-password?next=${encodeURIComponent(next)}`;
     const user = useUserStore((state) => state.user);
@@ -27,17 +31,72 @@ export default function LoginPage() {
         }
     }, [hydrated, user, next, navigate]);
 
+    // 后端冷启动时该请求会失败：按退避间隔重试直到拿到配置。
+    // 若首次失败即放弃，localMode 永远不会被置真，
+    // 本地单机版的“自动进入工作台”轮询也不会被激活，页面会停在登录表单。
     useEffect(() => {
-        void getAuthSettings()
-            .then((settings) => setLinuxdoEnabled(settings.linuxdoEnabled))
-            .catch((error) => {
-                // 这是登录页的展示配置读取：失败时明确隐藏第三方入口，
-                // 账号密码登录仍可用；不能无痕地把配置读取失败当成成功。
-                console.warn("读取登录方式配置失败，已隐藏第三方登录入口", error);
-            });
+        let cancelled = false;
+        const load = async (attempt = 0): Promise<void> => {
+            try {
+                const settings = await getAuthSettings();
+                if (cancelled) return;
+                setLinuxdoEnabled(settings.linuxdoEnabled);
+                if (settings.localMode) {
+                    setLocalMode(true);
+                    useUserStore.getState().setLocalMode(true);
+                }
+            } catch (error) {
+                const delay = AUTH_SETTINGS_RETRY_DELAYS_MS[attempt];
+                if (delay === undefined) {
+                    // 这是登录页的展示配置读取：失败时明确隐藏第三方入口，
+                    // 账号密码登录仍可用；不能无痕地把配置读取失败当成成功。
+                    console.warn("读取登录方式配置失败，已隐藏第三方登录入口", error);
+                    return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, delay));
+                if (!cancelled) await load(attempt + 1);
+            }
+        };
+        void load();
         const oauthError = params.get("oauth_error");
         if (oauthError) message.error(oauthError);
+        return () => {
+            cancelled = true;
+        };
     }, [message, params]);
+
+    // 本地单机模式：轮询会话，本地服务恢复后自动进入工作台。
+    useEffect(() => {
+        if (!localMode) return;
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const payload = await getAuthSession();
+                if (cancelled || !payload.user) return;
+                const { applyUserSession } = await import("@/lib/user-session");
+                if (cancelled) return;
+                await applyUserSession(payload);
+            } catch {
+                // 本地服务未就绪，下一轮继续。
+            }
+        };
+        void poll();
+        const timer = window.setInterval(() => void poll(), 2000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [localMode]);
+
+    if (localMode) {
+        return (
+            <div className="flex flex-col items-center gap-3 py-16 text-center" aria-live="polite">
+                <div className="size-8 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+                <p className="text-sm font-medium text-white/80">正在进入影策工作台</p>
+                <p className="text-xs text-white/45">本地服务暂未就绪，恢复后将自动进入，无需登录</p>
+            </div>
+        );
+    }
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
