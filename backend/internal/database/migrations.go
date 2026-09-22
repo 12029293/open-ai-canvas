@@ -11,7 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 35
+// 影策定制迁移 v32-v35 与上游 v32（channel_model_tags）编号冲突：
+// 上游迁移重编号为 v36，避免与已应用 v32-v35 的存量数据库冲突。
+const CurrentSchemaVersion int64 = 36
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -105,6 +107,7 @@ var schemaMigrations = []migration{
 	{version: 31, name: "tool_favorites", checksum: "sha256:tool-favorites-v31", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.ToolFavorite{})
 	}},
+<<<<<<< HEAD
 	{version: 32, name: "doubao_account_pool", checksum: "sha256:doubao-account-pool-v32-20260920", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.DoubaoAccount{}, &model.DoubaoPoolMeta{})
 	}},
@@ -122,6 +125,16 @@ var schemaMigrations = []migration{
 	{version: 35, name: "web_relay_account_pool", checksum: "sha256:web-relay-account-pool-v35-20260920", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.WebRelayAccount{})
 	}},
+	// v36 上游 channel_model_tags 迁移（原上游 v32，因编号冲突重编号为 v36）。
+	{version: 36, name: "channel_model_tags", checksum: "sha256:channel-model-tags-v36", apply: migrateChannelModelTags},
+}
+
+func migrateChannelModelTags(tx *gorm.DB) error {
+	if tx.Migrator().HasColumn(&model.ChannelModel{}, "Tags") {
+		return nil
+	}
+	return tx.Migrator().AddColumn(&model.ChannelModel{}, "Tags")
+}
 }
 
 func migrateChannelCreditCost(tx *gorm.DB) error {
