@@ -107,7 +107,6 @@ var schemaMigrations = []migration{
 	{version: 31, name: "tool_favorites", checksum: "sha256:tool-favorites-v31", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.ToolFavorite{})
 	}},
-<<<<<<< HEAD
 	{version: 32, name: "doubao_account_pool", checksum: "sha256:doubao-account-pool-v32-20260920", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.DoubaoAccount{}, &model.DoubaoPoolMeta{})
 	}},
@@ -134,7 +133,6 @@ func migrateChannelModelTags(tx *gorm.DB) error {
 		return nil
 	}
 	return tx.Migrator().AddColumn(&model.ChannelModel{}, "Tags")
-}
 }
 
 func migrateChannelCreditCost(tx *gorm.DB) error {
