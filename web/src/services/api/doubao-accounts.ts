@@ -143,3 +143,42 @@ export async function fetchDoubaoQrStatus(site: PoolSite = "doubao") {
 export async function cancelDoubaoQrLogin(site: PoolSite = "doubao") {
     return http.post<{ canceled: boolean }>("/doubao-accounts/qr/cancel", { site });
 }
+
+// ------------------------------------------------------------ 手动过安全验证（710022004 风控）
+
+export type DoubaoVerifyState = "idle" | "waiting" | "success" | "expired" | "canceled" | "failed";
+
+export type DoubaoVerifySession = {
+    state: DoubaoVerifyState;
+    message: string;
+    accountId?: string;
+    accountLabel?: string;
+    site?: PoolSite;
+    hasBrowser: boolean;
+    elapsedText: string;
+};
+
+/** 为指定账号启动验证窗口：后端弹出本机浏览器并预注入该账号 Cookie，用户过滑块后回收 Cookie。已有会话时返回现有会话。 */
+export async function startDoubaoVerify(id: string) {
+    return http.post<{ session: DoubaoVerifySession; started: boolean }>(`/doubao-accounts/${id}/verify/start`);
+}
+
+export async function fetchDoubaoVerifyStatus() {
+    return http.get<{ session: DoubaoVerifySession }>("/doubao-accounts/verify/status");
+}
+
+/** 用户在窗口中完成滑块/安全验证后调用：回收最新完整 Cookie 并恢复账号可用。 */
+export async function captureDoubaoVerify() {
+    return http.post<{ session: DoubaoVerifySession }>("/doubao-accounts/verify/capture");
+}
+
+export async function cancelDoubaoVerify() {
+    return http.post<{ canceled: boolean }>("/doubao-accounts/verify/cancel");
+}
+
+// ------------------------------------------------------------ 补抓浏览器指纹
+
+/** 补抓指定账号的浏览器指纹（同步执行，约 15~40 秒，期间会短暂弹出浏览器窗口）。 */
+export async function refreshDoubaoFingerprint(id: string) {
+    return http.post<{ account: DoubaoAccountView }>(`/doubao-accounts/${id}/fingerprint/refresh`, undefined, { timeout: 120_000 });
+}

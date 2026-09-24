@@ -42,7 +42,7 @@ func TestProbeDownloadAPI(t *testing.T) {
 	}
 	for _, ep := range endpoints {
 		for _, body := range bodies {
-			reqURL := doubaoOrigin + ep + "?" + buildQuery(cookie, tabID).Encode()
+			reqURL := doubaoOrigin + ep + "?" + buildQuery(ctx, cookie, tabID).Encode()
 			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			req, err := http.NewRequestWithContext(cctx, http.MethodPost, reqURL, strings.NewReader(mustJSON(body)))
 			if err != nil {

@@ -13,7 +13,8 @@ type SidebarCollapsedController = {
 };
 
 // 工作台与管理后台的侧栏折叠状态各自独立，避免一边展开/收起串到另一边。
-function createSidebarCollapsedController(storageKey: string, changeEvent: string): SidebarCollapsedController {
+// defaultCollapsed 是 localStorage 无记录时（首次打开）的初始状态；用户切换过一次后以存储值为准。
+function createSidebarCollapsedController(storageKey: string, changeEvent: string, defaultCollapsed: boolean): SidebarCollapsedController {
     const storage = () => {
         if (typeof window === "undefined") return undefined;
         try {
@@ -26,9 +27,12 @@ function createSidebarCollapsedController(storageKey: string, changeEvent: strin
     return {
         read() {
             try {
-                return storage()?.getItem(storageKey) === "1";
+                const stored = storage()?.getItem(storageKey);
+                if (stored === "1") return true;
+                if (stored === "0") return false;
+                return defaultCollapsed;
             } catch {
-                return false;
+                return defaultCollapsed;
             }
         },
         write(collapsed) {
@@ -57,8 +61,9 @@ function createSidebarCollapsedController(storageKey: string, changeEvent: strin
     };
 }
 
-const workspaceSidebarState = createSidebarCollapsedController(WORKSPACE_SIDEBAR_STORAGE_KEY, WORKSPACE_SIDEBAR_CHANGE_EVENT);
-const adminSidebarState = createSidebarCollapsedController(ADMIN_SIDEBAR_STORAGE_KEY, ADMIN_SIDEBAR_CHANGE_EVENT);
+// 工作台首次打开默认收起（窄轨），管理后台维持默认展开。
+const workspaceSidebarState = createSidebarCollapsedController(WORKSPACE_SIDEBAR_STORAGE_KEY, WORKSPACE_SIDEBAR_CHANGE_EVENT, true);
+const adminSidebarState = createSidebarCollapsedController(ADMIN_SIDEBAR_STORAGE_KEY, ADMIN_SIDEBAR_CHANGE_EVENT, false);
 
 export function readWorkspaceSidebarCollapsed() {
     return workspaceSidebarState.read();

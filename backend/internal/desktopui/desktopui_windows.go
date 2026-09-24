@@ -12,6 +12,11 @@ import (
 	"github.com/jchv/go-webview2"
 )
 
+// OpenBrowser 用系统默认浏览器打开 URL（浏览器模式启动路径，不阻塞）。
+func OpenBrowser(url string) error {
+	return openBrowser(url)
+}
+
 // ShowWindow 打开桌面窗口并阻塞到窗口关闭。
 // WebView2 不可用时回退浏览器（浏览器方式立即返回，不阻塞）。
 func ShowWindow(title, url string) error {

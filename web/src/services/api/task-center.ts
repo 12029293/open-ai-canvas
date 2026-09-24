@@ -32,6 +32,7 @@ export type GenerationTask = {
     provider?: string;
     model?: string;
     providerRequestId?: string;
+    providerAccount?: string;
     providerCancelStatus?: ProviderCancelStatus;
     providerCancelError?: string;
     providerCancelAttempts?: number;

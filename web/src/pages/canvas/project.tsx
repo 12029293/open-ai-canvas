@@ -564,7 +564,8 @@ function InfiniteCanvasPage() {
     });
 
     const cancelCanvasTask = useCallback(
-        (task: import("@/services/api/task-center").GenerationTask) => {
+        // 只用到 id：画布节点上的取消入口只有 taskId，直接传 { id } 即可复用同一确认流程。
+        (task: Pick<import("@/services/api/task-center").GenerationTask, "id">) => {
             modal.confirm({
                 title: "取消生成任务？",
                 content: "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
@@ -586,6 +587,16 @@ function InfiniteCanvasPage() {
             });
         },
         [bindGenerationTask, message, modal, nodesRef, projectId, queryClient, setTaskDetail],
+    );
+
+    // 画布节点运行态的取消入口：节点上只有 taskId，转发给同一套取消确认流程。
+    const cancelCanvasNodeTask = useCallback(
+        (node: import("@/types/canvas").CanvasNodeData) => {
+            const taskId = node.metadata?.taskId;
+            if (!taskId) return;
+            cancelCanvasTask({ id: taskId });
+        },
+        [cancelCanvasTask],
     );
 
     useEffect(() => {
@@ -2713,6 +2724,7 @@ function InfiniteCanvasPage() {
                                                 onRetry={retryCanvasNode}
                                                 onReloadResource={reloadCanvasNodeResource}
                                                 onOpenTaskDetails={openCanvasNodeTaskDetails}
+                                                onCancelTask={cancelCanvasNodeTask}
                                                 onOpenVersions={openCanvasNodeVersions}
                                                 onViewImage={viewCanvasNodeImage}
                                                 onReplaceMedia={replaceCanvasNodeMedia}

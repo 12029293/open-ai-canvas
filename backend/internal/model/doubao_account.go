@@ -31,6 +31,13 @@ type DoubaoAccount struct {
 	// 代理被删除时随解绑一起清空。
 	ProxyID   string `gorm:"size:64;not null;default:''" json:"proxyId"`
 	ProxyURL  string `gorm:"size:512;not null;default:''" json:"-"`
+	// 登录浏览器指纹（扫码登录/手动过验证时从登录页捕获）：生成请求复用同一套
+	// UA 与设备 ID，和账号登录时的真实浏览器保持一致，降低新账号被上游
+	// 顶点限流（710022002）的概率。空值 = 回退到派生指纹。
+	UserAgent string `gorm:"size:320;not null;default:''" json:"-"`
+	DeviceID  string `gorm:"size:64;not null;default:''" json:"-"`
+	WebID     string `gorm:"size:64;not null;default:''" json:"-"`
+	TeaUUID   string `gorm:"size:64;not null;default:''" json:"-"`
 	// Tags 以逗号连接存储（单账号最多 8 个、每个 16 字符，见 doubao.NormalizeTags）。
 	Tags      string    `gorm:"size:256;not null;default:''" json:"tags"`
 	Note      string    `gorm:"size:256;not null;default:''" json:"note"`

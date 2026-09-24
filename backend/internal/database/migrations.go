@@ -13,7 +13,7 @@ import (
 
 // 影策定制迁移 v32-v35 与上游 v32（channel_model_tags）编号冲突：
 // 上游迁移重编号为 v36，避免与已应用 v32-v35 的存量数据库冲突。
-const CurrentSchemaVersion int64 = 36
+const CurrentSchemaVersion int64 = 38
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -126,6 +126,19 @@ var schemaMigrations = []migration{
 	}},
 	// v36 上游 channel_model_tags 迁移（原上游 v32，因编号冲突重编号为 v36）。
 	{version: 36, name: "channel_model_tags", checksum: "sha256:channel-model-tags-v36", apply: migrateChannelModelTags},
+	// v37 任务展示账号池账号：tasks 增加 provider_account 列（取号后回填）。
+	// AutoMigrate / AddColumn 对已存在的 tasks 只补缺失列，不动历史数据。
+	{version: 37, name: "task_provider_account", checksum: "sha256:task-provider-account-v37-20260922", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.Task{}, "ProviderAccount") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.Task{}, "ProviderAccount")
+	}},
+	// v38 账号登录浏览器指纹：doubao_accounts 增加 UA / 设备 ID 列，
+	// 扫码登录时从登录页捕获，生成请求按账号复用真实浏览器指纹。
+	{version: 38, name: "doubao_account_fingerprint", checksum: "sha256:doubao-account-fingerprint-v38-20260923", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.DoubaoAccount{})
+	}},
 }
 
 func migrateChannelModelTags(tx *gorm.DB) error {

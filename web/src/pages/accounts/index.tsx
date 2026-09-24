@@ -1,12 +1,12 @@
-import { App, Button, Checkbox, Input, Popconfirm, Segmented, Select, Tag, Tooltip } from "antd";
-import { Ban, Check, CircleCheck, Clock3, Globe, KeyRound, ListChecks, Loader2, MonitorSmartphone, Network, PencilLine, Plus, QrCode, RotateCcw, Snowflake, Tag as TagIcon, TimerReset, Trash2, UserRoundCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { App, Button, Checkbox, Input, Popconfirm, Segmented, Select, Tooltip } from "antd";
+import { Ban, Check, CircleCheck, Clock3, Fingerprint, Globe, KeyRound, ListChecks, Loader2, MonitorSmartphone, Network, PencilLine, Plus, QrCode, RotateCcw, ShieldCheck, Snowflake, TimerReset, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import { readAxiosError } from "@/services/api/image-response";
-import { cancelDoubaoQrLogin, fetchDoubaoQrStatus, startDoubaoQrLogin, POOL_SITE_META, type DoubaoQrSession, type PoolSite } from "@/services/api/doubao-accounts";
+import { cancelDoubaoQrLogin, captureDoubaoVerify, cancelDoubaoVerify, fetchDoubaoQrStatus, fetchDoubaoVerifyStatus, refreshDoubaoFingerprint, startDoubaoQrLogin, startDoubaoVerify, POOL_SITE_META, type DoubaoQrSession, type DoubaoVerifySession, type PoolSite } from "@/services/api/doubao-accounts";
 import {
     assignNetworkProxy,
     createNetworkProxy,
@@ -20,7 +20,6 @@ import {
 } from "@/services/api/network-proxies";
 import { cn } from "@/lib/utils";
 import {
-    DOUBAO_COOLDOWN_MINUTES,
     DOUBAO_STATUS_META,
     effectiveStatus,
     useDoubaoAccountStore,
@@ -28,6 +27,25 @@ import {
 } from "@/stores/use-doubao-account-store";
 
 type StatusFilter = DoubaoAccount["state"] | "all";
+
+type BadgeTone = "success" | "warning" | "error" | "default";
+
+/** 徽章色调：用项目 token 自绘，不走 antd Tag 预设色（其全局覆盖存在渲染不一致问题）。 */
+const BADGE_TONE_CLASS: Record<BadgeTone, string> = {
+    success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    warning: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    error: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+    default: "border-border/70 bg-surface-hover text-foreground/55",
+};
+
+/** 账号行内的小徽章（当前 / 状态），替换 antd Tag 保证明暗主题下渲染一致；超宽文本截断并靠 title 提示全文。 */
+function StatusBadge({ tone, className, children }: { tone: BadgeTone; className?: string; children: ReactNode }) {
+    return (
+        <span className={cn("inline-flex max-w-full shrink-0 items-center whitespace-nowrap rounded-md border px-1.5 py-px text-[11px] font-medium leading-4", BADGE_TONE_CLASS[tone], className)}>
+            <span className="truncate">{children}</span>
+        </span>
+    );
+}
 
 /** 账号池健康度统计卡：点击即按该状态筛选（选中态用描边+角标，不只靠颜色）。 */
 function FilterStatCard({ label, value, tone, active, onClick }: { label: string; value: number; tone: "neutral" | "success" | "warning" | "error" | "muted"; active: boolean; onClick: () => void }) {
@@ -69,11 +87,9 @@ export default function AccountsPage() {
     const bulkImport = useDoubaoAccountStore((state) => state.bulkImport);
     const updateAccount = useDoubaoAccountStore((state) => state.updateAccount);
     const removeAccounts = useDoubaoAccountStore((state) => state.removeAccounts);
-    const setCurrentAccount = useDoubaoAccountStore((state) => state.setCurrentAccount);
     const batch = useDoubaoAccountStore((state) => state.batch);
     const clearCooldown = useDoubaoAccountStore((state) => state.clearCooldown);
     const clearAllCooldowns = useDoubaoAccountStore((state) => state.clearAllCooldowns);
-    const cooldown = useDoubaoAccountStore((state) => state.cooldown);
 
     const [filter, setFilter] = useState<StatusFilter>("all");
     const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -84,8 +100,12 @@ export default function AccountsPage() {
     const [qrSession, setQrSession] = useState<DoubaoQrSession | null>(null);
     const [qrBusy, setQrBusy] = useState(false);
     const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // 手动过验证（710022004 风控）：后端弹出预注入账号 Cookie 的浏览器窗口。
+    const [verifyOpen, setVerifyOpen] = useState(false);
+    const [verifySession, setVerifySession] = useState<DoubaoVerifySession | null>(null);
+    const [verifyBusy, setVerifyBusy] = useState(false);
+    const verifyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [editing, setEditing] = useState<DoubaoAccount | null>(null);
-    const [taggingIds, setTaggingIds] = useState<string[] | null>(null);
     const [busy, setBusy] = useState(false);
 
     // 网络代理：列表 + 表单弹窗 + 测试中状态。
@@ -115,11 +135,20 @@ export default function AccountsPage() {
     const [editTags, setEditTags] = useState("");
     const [editNote, setEditNote] = useState("");
     const [editEnabled, setEditEnabled] = useState(true);
-    const [tagInput, setTagInput] = useState("");
 
     useEffect(() => {
         refresh().catch((error) => message.error(readAxiosError(error, "账号池加载失败")));
         fetchNetworkProxies().then(({ proxies: list }) => setProxies(list)).catch(() => {});
+        // 挂载时检测进行中的验证会话（如生成遇 710022004 时后端已自动弹出窗口），
+        // 有则直接展开验证弹窗，避免用户不知道去哪里点「完成验证」。
+        fetchDoubaoVerifyStatus()
+            .then(({ session }) => {
+                if (session.state === "waiting") {
+                    setVerifySession(session);
+                    setVerifyOpen(true);
+                }
+            })
+            .catch(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -160,6 +189,24 @@ export default function AccountsPage() {
         } finally {
             setBusy(false);
         }
+    };
+
+    // 补抓浏览器指纹：后端用该账号 Cookie 短暂开窗捕获真实 UA/设备 ID 并落库，
+    // 修复旧账号无指纹导致的上游顶点限流（710022002）。同步接口，约 15~40 秒。
+    const refreshFingerprint = (accountId: string) => {
+        setBusy(true);
+        message.loading({ content: "正在补抓浏览器指纹，会短暂弹出浏览器窗口…", key: `fp-${accountId}`, duration: 0 });
+        void refreshDoubaoFingerprint(accountId)
+            .then(() => {
+                message.success({ content: "指纹已补抓并写入账号池", key: `fp-${accountId}` });
+            })
+            .catch((error) => {
+                message.error({ content: readAxiosError(error, "指纹补抓失败"), key: `fp-${accountId}` });
+            })
+            .finally(() => {
+                setBusy(false);
+                void refresh();
+            });
     };
 
     const openEdit = (account: DoubaoAccount) => {
@@ -297,20 +344,6 @@ export default function AccountsPage() {
         });
     };
 
-    const saveTag = () => {
-        if (!taggingIds?.length) return;
-        const tags = tagInput.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
-        if (!tags.length) {
-            message.warning("请输入至少一个标签");
-            return;
-        }
-        void withBusy(async () => {
-            await batch("tag", taggingIds, tags);
-            setTaggingIds(null);
-            setTagInput("");
-        }, "标签已追加");
-    };
-
     // 扫码登录：打开弹窗 → 启动后端浏览器会话 → 轮询状态直到终态。
     const stopQrPolling = useCallback(() => {
         if (qrPollRef.current) {
@@ -371,11 +404,77 @@ export default function AccountsPage() {
         });
     };
 
-    const batchAction = (action: "activate" | "enable" | "disable" | "clearCooldown" | "tag" | "remove") => {        if (!selectedIds.length) return;
+    // 手动过验证：启动后端浏览器会话（预注入该账号 Cookie）→ 轮询状态 →
+    // 用户过完滑块点「完成验证」回收最新 Cookie，账号恢复可用。
+    const stopVerifyPolling = useCallback(() => {
+        if (verifyPollRef.current) {
+            clearInterval(verifyPollRef.current);
+            verifyPollRef.current = null;
+        }
+    }, []);
+
+    const openVerify = (accountId: string) => {
+        setVerifyOpen(true);
+        setVerifySession(null);
+        setVerifyBusy(true);
+        stopVerifyPolling();
+        startDoubaoVerify(accountId)
+            .then(({ session }) => setVerifySession(session))
+            .catch((error) => {
+                message.error(readAxiosError(error, "验证窗口启动失败"));
+                setVerifySession({ state: "failed", message: "启动失败", hasBrowser: false, elapsedText: "" });
+            })
+            .finally(() => setVerifyBusy(false));
+    };
+
+    useEffect(() => {
+        if (!verifyOpen) {
+            stopVerifyPolling();
+            return;
+        }
+        const state = verifySession?.state;
+        if (state === "success") {
+            stopVerifyPolling();
+            message.success("验证完成，账号已恢复可用");
+            refresh().catch(() => {});
+            const timer = setTimeout(() => setVerifyOpen(false), 1600);
+            return () => clearTimeout(timer);
+        }
+        if (state && state !== "waiting" && state !== "idle") {
+            stopVerifyPolling();
+            refresh().catch(() => {});
+            return;
+        }
+        stopVerifyPolling();
+        verifyPollRef.current = setInterval(() => {
+            fetchDoubaoVerifyStatus()
+                .then(({ session }) => setVerifySession(session))
+                .catch(() => {});
+        }, 1500);
+        return stopVerifyPolling;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [verifyOpen, verifySession?.state, stopVerifyPolling]);
+
+    useEffect(() => stopVerifyPolling, [stopVerifyPolling]);
+
+    const captureVerify = () => {
+        setVerifyBusy(true);
+        captureDoubaoVerify()
+            .then(({ session }) => setVerifySession(session))
+            .catch((error) => message.error(readAxiosError(error, "保存验证结果失败")))
+            .finally(() => setVerifyBusy(false));
+    };
+
+    const verifyCancel = () => {
+        void withBusy(async () => {
+            await cancelDoubaoVerify().catch(() => {});
+            setVerifyOpen(false);
+        });
+    };
+
+    const batchAction = (action: "enable" | "disable" | "clearCooldown" | "remove") => {
+        if (!selectedIds.length) return;
         switch (action) {
-            case "activate":
-                void withBusy(async () => { await setCurrentAccount(selectedIds[0]); }, "已设为当前账号");
-                break;
             case "enable":
                 void withBusy(async () => { await batch("enable", selectedIds); }, "已启用所选账号");
                 break;
@@ -384,10 +483,6 @@ export default function AccountsPage() {
                 break;
             case "clearCooldown":
                 void withBusy(async () => { await clearCooldown(selectedIds); }, "已清除冷却");
-                break;
-            case "tag":
-                setTaggingIds(selectedIds);
-                setTagInput("");
                 break;
             case "remove":
                 void withBusy(async () => {
@@ -507,15 +602,20 @@ export default function AccountsPage() {
 
             {/* 批量操作条常驻显示；未选中账号时按钮整体置灰。 */}
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-primary/[.06] px-3 py-2">
+                <Checkbox
+                    checked={filtered.length > 0 && filtered.every((account) => selected.has(account.id))}
+                    indeterminate={selected.size > 0 && selected.size < filtered.length}
+                    disabled={busy || !filtered.length}
+                    onChange={(event) => setSelected(event.target.checked ? new Set(filtered.map((account) => account.id)) : new Set())}
+                    aria-label="全选当前筛选结果"
+                />
                 <span className="mr-1 flex items-center gap-1.5 text-xs text-foreground/70">
                     <ListChecks className="size-3.5" aria-hidden />
                     已选 <b className="tabular-nums">{selected.size}</b> 个
                 </span>
-                <Button size="small" disabled={busy || !selected.size} icon={<UserRoundCheck className="size-3.5" />} onClick={() => batchAction("activate")}>设为当前</Button>
                 <Button size="small" disabled={busy || !selected.size} onClick={() => batchAction("enable")}>启用</Button>
                 <Button size="small" disabled={busy || !selected.size} onClick={() => batchAction("disable")}>停用</Button>
                 <Button size="small" disabled={busy || !selected.size} icon={<Snowflake className="size-3.5" />} onClick={() => batchAction("clearCooldown")}>清除冷却</Button>
-                <Button size="small" disabled={busy || !selected.size} icon={<TagIcon className="size-3.5" />} onClick={() => batchAction("tag")}>打标签</Button>
                 <Popconfirm title={`删除所选 ${selected.size} 个账号？`} okButtonProps={{ danger: true }} onConfirm={() => batchAction("remove")} disabled={!selected.size}>
                     <Button size="small" danger disabled={busy || !selected.size} icon={<Trash2 className="size-3.5" />}>删除</Button>
                 </Popconfirm>
@@ -533,7 +633,6 @@ export default function AccountsPage() {
                             className={cn(
                                 "flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-surface px-4 py-3 transition-colors",
                                 isSelected ? "border-primary/45" : "border-border/60 hover:border-border",
-                                account.active && "ring-1 ring-primary/35",
                             )}
                         >
                             <Checkbox
@@ -541,24 +640,28 @@ export default function AccountsPage() {
                                 onChange={(event) => toggleSelected(account.id, event.target.checked)}
                                 aria-label={`选择 ${account.label}`}
                             />
-                            <div className="flex min-w-40 flex-col">
+                            <div className="flex w-60 shrink-0 flex-col">
                                 <span className="flex items-center gap-1.5 text-sm font-medium leading-5">
-                                    {account.label}
-                                    {account.active ? <Tag color="blue" className="m-0">当前</Tag> : null}
+                                    <span className="truncate">{account.label}</span>
                                 </span>
-                                <span className="text-xs text-foreground/45">
+                                <span className="truncate text-xs text-foreground/45">
                                     {account.hasFullCookie ? `完整 Cookie ${account.masked}` : `sessionid ${account.masked}`}
                                     {account.tags.length ? ` · ${account.tags.join(" / ")}` : ""}
                                 </span>
                             </div>
-                            <Tag color={meta.color} className="m-0">{account.statusText}</Tag>
-                            {status === "cooling" && account.cooldownUntil ? (
-                                <span className="flex items-center gap-1 text-xs text-amber-500 dark:text-amber-400">
-                                    <Clock3 className="size-3.5" aria-hidden />
-                                    至 {new Date(account.cooldownUntil).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
-                                </span>
-                            ) : null}
-                            {account.note ? <span className="min-w-0 max-w-56 truncate text-xs text-foreground/55" title={account.note}>{account.note}</span> : null}
+                            {/* 以下均为固定宽度列：无论状态/备注有无，后续列起点保持上下对齐。 */}
+                            <div className="w-40 shrink-0">
+                                <StatusBadge tone={meta.kind}>{account.statusText}</StatusBadge>
+                            </div>
+                            <div className="w-[72px] shrink-0">
+                                {status === "cooling" && account.cooldownUntil ? (
+                                    <span className="flex items-center gap-1 text-xs tabular-nums text-amber-500 dark:text-amber-400">
+                                        <Clock3 className="size-3.5 shrink-0" aria-hidden />
+                                        至 {new Date(account.cooldownUntil).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                ) : null}
+                            </div>
+                            <div className="w-32 shrink-0 truncate text-xs text-foreground/55" title={account.note || undefined}>{account.note}</div>
                             {/* 出站代理：每账号一个下拉；值为代理 ID，空 = 直连。 */}
                             <div className="flex w-56 shrink-0 flex-col gap-0.5">
                                 <Select
@@ -576,32 +679,31 @@ export default function AccountsPage() {
                                     <span className="text-[11px] text-amber-500 dark:text-amber-400">代理已删除，保存后恢复直连</span>
                                 ) : null}
                             </div>
-                            <div className="ml-auto flex items-center gap-3 text-xs tabular-nums text-foreground/50">
-                                <span title="取用次数">取 {account.useCount}</span>
-                                <span className="text-emerald-500 dark:text-emerald-400" title="成功次数">成 {account.successCount}</span>
-                                <span className="text-red-500 dark:text-red-400" title="失败次数">败 {account.failCount}</span>
-                                {account.lastError ? (
-                                    <Tooltip title={account.lastError}>
-                                        <span className="cursor-help text-red-500/80 dark:text-red-400/80">最近错误</span>
-                                    </Tooltip>
-                                ) : null}
+                            <div className="ml-auto flex shrink-0 items-center gap-3 text-xs tabular-nums text-foreground/50">
+                                <span className="w-9" title="取用次数">取 {account.useCount}</span>
+                                <span className="w-9 text-emerald-500 dark:text-emerald-400" title="成功次数">成 {account.successCount}</span>
+                                <span className="w-9 text-red-500 dark:text-red-400" title="失败次数">败 {account.failCount}</span>
+                                {/* 固定占位：无错误时隐藏但保留宽度，保证右侧按钮列上下对齐。 */}
+                                <Tooltip title={account.lastError || undefined}>
+                                    <span className={cn("cursor-help text-red-500/80 dark:text-red-400/80", !account.lastError && "invisible")}>最近错误</span>
+                                </Tooltip>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
-                                {!account.active ? (
-                                    <Button size="small" type="text" disabled={busy} onClick={() => void withBusy(() => setCurrentAccount(account.id), "已设为当前账号")}>设为当前</Button>
-                                ) : null}
-                                {status === "cooling" ? (
-                                    <Button size="small" type="text" disabled={busy} icon={<RotateCcw className="size-3.5" />} onClick={() => void withBusy(() => clearCooldown([account.id]), "已解除冷却")}>解除冷却</Button>
-                                ) : status !== "expired" ? (
-                                    <Tooltip title={`冷却 ${DOUBAO_COOLDOWN_MINUTES} 分钟`}>
-                                        <Button size="small" type="text" disabled={busy} icon={<Snowflake className="size-3.5" />} aria-label="进入冷却" onClick={() => void withBusy(() => cooldown(account.id), `已进入冷却（${DOUBAO_COOLDOWN_MINUTES} 分钟）`)} />
-                                    </Tooltip>
-                                ) : null}
+                                <Tooltip title="用该账号 Cookie 短暂开窗补抓真实浏览器指纹（UA + 设备 ID），修复无指纹账号被上游顶点限流的问题">
+                                    <Button size="small" type="text" disabled={busy} icon={<Fingerprint className="size-3.5" />} aria-label="补抓指纹" onClick={() => refreshFingerprint(account.id)}>补指纹</Button>
+                                </Tooltip>
+                                <Tooltip title="打开预注入该账号登录态的浏览器窗口，手动过滑块/安全验证（710022004）后一键恢复可用">
+                                    <Button size="small" type="text" disabled={busy} icon={<ShieldCheck className="size-3.5" />} aria-label="手动过验证" onClick={() => openVerify(account.id)}>过验证</Button>
+                                </Tooltip>
                                 {status === "disabled" ? (
                                     <Button size="small" type="text" disabled={busy} icon={<CircleCheck className="size-3.5" />} onClick={() => void withBusy(() => batch("enable", [account.id]), "已启用")}>启用</Button>
                                 ) : (
                                     <Button size="small" type="text" disabled={busy} icon={<Ban className="size-3.5" />} onClick={() => void withBusy(() => batch("disable", [account.id]), "已停用")}>停用</Button>
                                 )}
+                                {/* 仅冷却行可见，但始终占位，保证后面的编辑/删除按钮各行对齐。 */}
+                                <Tooltip title="解除该账号的冷却，立即恢复可被取用">
+                                    <Button size="small" type="text" disabled={busy} className={cn(status !== "cooling" && "invisible")} icon={<RotateCcw className="size-3.5" />} onClick={() => void withBusy(() => clearCooldown([account.id]), "已解除冷却")}>解除冷却</Button>
+                                </Tooltip>
                                 <Button size="small" type="text" icon={<PencilLine className="size-3.5" />} aria-label="编辑账号" onClick={() => openEdit(account)} />
                                 <Popconfirm title="删除该账号？" okButtonProps={{ danger: true }} onConfirm={() => { void withBusy(() => removeAccounts([account.id]), "账号已删除"); setSelected((prev) => { const next = new Set(prev); next.delete(account.id); return next; }); }}>
                                     <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} aria-label="删除账号" />
@@ -721,6 +823,61 @@ export default function AccountsPage() {
                 </div>
             </AppModal>
 
+            {/* 手动过验证：后端弹出本机浏览器（预注入该账号 Cookie），过完滑块一键回收 Cookie */}
+            <AppModal
+                open={verifyOpen}
+                title="手动过安全验证"
+                onCancel={() => setVerifyOpen(false)}
+                footer={
+                    verifySession?.state === "waiting" || verifyBusy
+                        ? [
+                              <Button key="capture" type="primary" loading={verifyBusy} onClick={captureVerify}>完成验证，保存 Cookie</Button>,
+                              <Button key="cancel" danger onClick={verifyCancel}>取消验证</Button>,
+                              <Button key="hide" type="text" onClick={() => setVerifyOpen(false)}>最小化</Button>,
+                          ]
+                        : [
+                              <Button key="close" onClick={() => setVerifyOpen(false)}>关闭</Button>,
+                          ]
+                }
+            >
+                <div className="flex flex-col items-center gap-4 px-6 pb-6 pt-6 text-center">
+                    {verifyBusy || verifySession?.state === "waiting" ? (
+                        <>
+                            <ShieldCheck className="size-10 text-primary" aria-hidden />
+                            <p className="text-sm font-medium">{verifySession?.message || "正在启动验证浏览器…"}</p>
+                            <p className="flex items-center gap-1.5 text-xs text-foreground/55">
+                                <MonitorSmartphone className="size-3.5" aria-hidden />
+                                验证窗口已打开{verifySession?.site ? POOL_SITE_META[verifySession.site].label : ""}并预注入该账号登录态（{verifySession?.elapsedText || "0 秒"}）
+                            </p>
+                            <p className="text-xs leading-5 text-foreground/45">
+                                在窗口中随便发一条消息并完成弹出的滑块/安全验证，然后点上方「完成验证，保存 Cookie」：系统会回收最新完整 Cookie、清除冷却与失败标记。超时 15 分钟自动关闭。
+                            </p>
+                        </>
+                    ) : null}
+                    {verifySession?.state === "success" ? (
+                        <>
+                            <span className="grid size-12 place-items-center rounded-full bg-emerald-500/12">
+                                <CircleCheck className="size-7 text-emerald-500 dark:text-emerald-400" aria-hidden />
+                            </span>
+                            <p className="text-sm font-medium">验证完成，账号已恢复可用</p>
+                            <p className="text-xs text-foreground/55">{verifySession.message}</p>
+                        </>
+                    ) : null}
+                    {verifySession && ["expired", "canceled", "failed", "idle"].includes(verifySession.state) ? (
+                        <>
+                            <span className="grid size-12 place-items-center rounded-full bg-red-500/12">
+                                <Ban className="size-7 text-red-500 dark:text-red-400" aria-hidden />
+                            </span>
+                            <p className="text-sm font-medium">
+                                {verifySession.state === "expired" ? "验证超时" : verifySession.state === "canceled" ? "已取消验证" : verifySession.state === "failed" ? "验证失败" : "没有进行中的验证"}
+                            </p>
+                            <p className="max-w-90 text-xs leading-5 text-foreground/55">{verifySession.message || "点击账号列表中的「过验证」重新发起。"}</p>
+                        </>
+                    ) : null}
+                    {!verifySession && !verifyBusy ? <p className="text-sm text-foreground/55">正在准备验证会话…</p> : null}
+                </div>
+            </AppModal>
+
             {/* 编辑账号 */}
             <AppModal
                 open={Boolean(editing)}
@@ -802,24 +959,6 @@ export default function AccountsPage() {
                     <p className="text-xs leading-5 text-foreground/45">
                         保存后可在代理列表里点「测试」验证连通性；把代理绑定到账号后，该账号的生成请求都会经由代理出站。
                     </p>
-                </div>
-            </AppModal>
-
-            {/* 打标签 */}
-            <AppModal
-                open={Boolean(taggingIds?.length)}
-                title="为选中账号追加标签"
-                onCancel={() => setTaggingIds(null)}
-                footer={[
-                    <Button key="cancel" onClick={() => setTaggingIds(null)}>取消</Button>,
-                    <Button key="save" type="primary" loading={busy} onClick={saveTag}>追加</Button>,
-                ]}
-            >
-                <div className="flex flex-col gap-4 px-6 pb-5 pt-4">
-                    <label className="flex flex-col gap-1.5">
-                        <span className="text-xs text-foreground/60">标签（逗号分隔）</span>
-                        <Input value={tagInput} onChange={(event) => setTagInput(event.target.value)} placeholder="如：分组A,高额度" />
-                    </label>
                 </div>
             </AppModal>
         </WorkspacePage>

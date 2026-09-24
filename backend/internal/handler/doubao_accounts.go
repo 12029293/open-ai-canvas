@@ -59,6 +59,50 @@ func RegisterDoubaoAccountRoutes(api *gin.RouterGroup, svc *service.Service) {
 		ok(c, gin.H{"canceled": true})
 	})
 
+	// 手动过验证（710022004 风控）：后端弹出本机浏览器并预注入该账号 Cookie，
+	// 用户在窗口里完成滑块/安全验证后点「完成验证」回收最新 Cookie。
+	group.POST("/:id/verify/start", func(c *gin.Context) {
+		view, started, err := svc.DoubaoVerifyStart(c.Param("id"))
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		ok(c, gin.H{"session": view, "started": started})
+	})
+
+	group.GET("/verify/status", func(c *gin.Context) {
+		ok(c, gin.H{"session": svc.DoubaoVerifyStatus()})
+	})
+
+	group.POST("/verify/capture", func(c *gin.Context) {
+		view, err := svc.DoubaoVerifyCapture()
+		if err != nil {
+			// 失败时带回当前会话快照，前端据此继续轮询/展示
+			c.JSON(http.StatusConflict, gin.H{"code": 409, "msg": err.Error(), "reason": "verify_capture_failed", "session": view})
+			return
+		}
+		ok(c, gin.H{"session": view})
+	})
+
+	group.POST("/verify/cancel", func(c *gin.Context) {
+		if err := svc.DoubaoVerifyCancel(); err != nil {
+			fail(c, http.StatusConflict, err)
+			return
+		}
+		ok(c, gin.H{"canceled": true})
+	})
+
+	// 补抓浏览器指纹：用账号已有 Cookie 开窗注入后捕获真实 UA/设备 ID 并落库
+	//（同步执行，约 15~40 秒）。用于修复旧账号无指纹导致的上游顶点限流。
+	group.POST("/:id/fingerprint/refresh", func(c *gin.Context) {
+		view, err := svc.DoubaoRefreshFingerprint(c.Param("id"))
+		if err != nil {
+			fail(c, http.StatusConflict, err)
+			return
+		}
+		ok(c, gin.H{"account": view})
+	})
+
 	group.POST("", func(c *gin.Context) {
 		var req service.DoubaoUpsertRequest
 		if err := c.ShouldBindJSON(&req); err != nil {

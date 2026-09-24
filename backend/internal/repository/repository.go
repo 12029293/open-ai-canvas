@@ -455,6 +455,16 @@ func (r *Repository) UpdateTaskProviderState(id string, providerRequestID string
 	return r.db.Model(&model.Task{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// UpdateTaskProviderAccount 回填账号池渠道当前取用的账号名（换号重试覆盖旧值）。
+func (r *Repository) UpdateTaskProviderAccount(id string, account string) error {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return nil
+	}
+	return r.db.Model(&model.Task{}).Where("id = ?", id).
+		Updates(map[string]any{"provider_account": account, "updated_at": time.Now()}).Error
+}
+
 func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, stage string, delay time.Duration) error {
 	now := time.Now()
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).

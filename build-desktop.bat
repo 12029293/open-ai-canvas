@@ -85,9 +85,11 @@ if errorlevel 8 (
 )
 
 rem ---- build the desktop exe ----
+rem osusergo/netgo + -extldflags -static: 新机没有 MinGW 运行时 DLL（libgcc 等）会导致双击无反应，
+rem 必须静态链接，导入表只留系统 DLL（KERNEL32 + api-ms-win-crt-*）。
 echo [3/3] Building YingceDesktop.exe ...
 pushd backend
-"%GO_EXE%" build -tags "webui desktop" -ldflags "-s -w" -o "%~dp0YingceDesktop.exe" ./cmd/server
+"%GO_EXE%" build -tags "webui desktop osusergo netgo" -ldflags "-s -w -extldflags -static" -o "%~dp0YingceDesktop.exe" ./cmd/server
 if errorlevel 1 (
     echo [ERROR] go build failed.
     popd

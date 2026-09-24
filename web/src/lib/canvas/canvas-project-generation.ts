@@ -159,6 +159,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         taskProgress: progress,
         taskStage: task.stage,
         taskProvider: task.provider,
+        taskAccount: task.providerAccount,
         taskStartedAt: task.startedAt,
         taskCompletedAt: task.completedAt,
         taskDurationMs: task.startedAt && task.completedAt ? Math.max(0, Date.parse(task.completedAt) - Date.parse(task.startedAt)) : undefined,

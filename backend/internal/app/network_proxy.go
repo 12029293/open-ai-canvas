@@ -10,12 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 
 	"golang.org/x/net/proxy"
 	"gorm.io/gorm"
@@ -194,6 +196,8 @@ func decorateProxyTestResult(result *NetworkProxyTestResult, dynamic bool) *Netw
 }
 
 // outboundProxyClient 按代理地址构建测试用 HTTP 客户端（支持 http/https/socks5）。
+// SOCKS5 及代理拨号均使用并行竞速转发器，代理商多 IP 轮询解析时
+// 任一出口可达即可完成测试，避免串行撞死 IP 耗尽整体超时。
 func outboundProxyClient(parsed *url.URL) (*http.Client, error) {
 	if parsed.Scheme == "socks5" {
 		var auth *proxy.Auth
@@ -201,7 +205,7 @@ func outboundProxyClient(parsed *url.URL) (*http.Client, error) {
 			password, _ := parsed.User.Password()
 			auth = &proxy.Auth{User: parsed.User.Username(), Password: password}
 		}
-		dialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, proxy.Direct)
+		dialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, outbound.ParallelDialer{})
 		if err != nil {
 			return nil, fmt.Errorf("SOCKS5 拨号器构建失败：%w", err)
 		}
@@ -211,7 +215,10 @@ func outboundProxyClient(parsed *url.URL) (*http.Client, error) {
 		}
 		return &http.Client{Transport: &http.Transport{DialContext: contextDialer.DialContext}}, nil
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}, nil
+	return &http.Client{Transport: &http.Transport{
+		Proxy:       http.ProxyURL(parsed),
+		DialContext: outbound.ParallelDialer{}.DialContext,
+	}}, nil
 }
 
 // testProxyRequestURL 公网探针（选响应快且少被墙内业务拦截的探测地址）。
@@ -229,7 +236,8 @@ func testProxyURL(proxyURL string) (*NetworkProxyTestResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 代理隧道（SOCKS5 握手 + TLS）整体耗时较高，给足 20 秒。
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testProxyRequestURL, nil)
@@ -240,7 +248,12 @@ func testProxyURL(proxyURL string) (*NetworkProxyTestResult, error) {
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		log.Printf("[network-proxy] 测试失败 %.80s: %v", proxyURL, err)
-		return &NetworkProxyTestResult{OK: false, Message: fmt.Sprintf("连接失败：%v", err)}, nil
+		message := fmt.Sprintf("连接失败：%v", err)
+		var netErr net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+			message = "连接超时：代理节点未在限时内响应（节点慢、线路不通或凭据未被接受）"
+		}
+		return &NetworkProxyTestResult{OK: false, Message: message}, nil
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 400 {

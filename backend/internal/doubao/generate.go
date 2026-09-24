@@ -20,8 +20,12 @@ const maxAccountAttempts = 5
 // poolError 区分「账号问题（可切换重试）」与「请求/协议问题（换号无意义）」。
 type poolError struct {
 	classified *ClassifyError // 非 nil 表示是账号类失败
-	err        error
+	err        error          // 原始错误（可能含 VideoFailure 等包装），供诊断层 errors.As 解包
 }
+
+// Unwrap 保留完整错误链：轨迹（VideoFailure）随 classified 分类丢失会导致
+// 任务日志缺会话轨迹，这里让 errors.As 能穿透 poolError 拿到底层。
+func (e *poolError) Unwrap() error { return e.err }
 
 func (e *poolError) Error() string {
 	if e.classified != nil {
@@ -36,6 +40,9 @@ type ImageRequest struct {
 	Model  string
 	Ratio  string
 	Style  string
+	// OnAccountPicked 每次从账号池取到账号后回调（换号重试会多次触发），
+	// app 层用它把当前账号名回填到任务记录。
+	OnAccountPicked func(site, label string)
 }
 
 // ImageResult 文生图结果。
@@ -53,6 +60,9 @@ type VideoRequest struct {
 	Duration int
 	Ratio    string
 	Site     string
+	// OnAccountPicked 每次从账号池取到账号后回调（换号重试会多次触发），
+	// app 层用它把当前账号名回填到任务记录。
+	OnAccountPicked func(site, label string)
 }
 
 func pickCredential(s *Service, preferID string) (*ActiveCredential, error) {
@@ -131,7 +141,7 @@ func pickSiteWithRetry(ctx context.Context, s *Service, site, prefer string) (*A
 func classifyOnce(err error) *poolError {
 	var ce *ClassifyError
 	if errors.As(err, &ce) {
-		return &poolError{classified: ce}
+		return &poolError{classified: ce, err: err}
 	}
 	return &poolError{err: err}
 }
@@ -148,6 +158,19 @@ func markFailedOptionsFor(ce *ClassifyError) MarkFailedOptions {
 	return opts
 }
 
+// maybeOpenManualVerify 710022004（滑块/安全验证）只能人工过：判定命中时
+// 自动弹出预注入该账号 Cookie 的验证窗口（已有验证会话时不重复开窗）。
+// 启动失败（如无浏览器）不影响生成主流程，错误只留在验证会话状态里。
+func maybeOpenManualVerify(s *Service, accountID string, ce *ClassifyError) {
+	if !IsVerifySceneError(ce) {
+		return
+	}
+	go func() {
+		defer func() { _ = recover() }()
+		_, _, _ = s.StartManualVerify(accountID)
+	}()
+}
+
 // GenerateImageWithPool 从账号池取号生成图片，账号类失败自动切换下一账号。
 func GenerateImageWithPool(ctx context.Context, s *Service, req ImageRequest) (*ImageResult, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
@@ -160,18 +183,22 @@ func GenerateImageWithPool(ctx context.Context, s *Service, req ImageRequest) (*
 		if err != nil {
 			// 已有真实上游失败时保留原始错误，不被「无号可取」覆盖。
 			if attempt > 0 {
-				return nil, fmt.Errorf("%s（账号池已无可用账号）", lastErr.Error())
+				return nil, fmt.Errorf("%s（已换号重试，池内无其他可用账号）", lastErr.Error())
 			}
 			return nil, err
+		}
+		if req.OnAccountPicked != nil {
+			req.OnAccountPicked(cred.Site, cred.Label)
 		}
 		// 生成在闭包内完成：无论成功、失败还是换号，都释放账号占用，
 		// 让并行任务能立刻领到空闲账号。
 		res, pe := func() (*ImageResult, *poolError) {
 			defer s.ReleaseAccount(cred.ID)
 			// 按取到账号的站点切换域名（豆包 / Dola 同协议双站点），
-			// 并注入该账号绑定的出站代理（空 = 直连）。
+			// 并注入该账号绑定的出站代理（空 = 直连）与登录浏览器指纹。
 			taskCtx := WithOrigin(ctx, siteOrigin(cred.Site))
 			taskCtx = WithProxy(taskCtx, cred.ProxyURL)
+			taskCtx = WithFingerprint(taskCtx, cred.Fingerprint())
 			urls, text, err := GenerateImageOnce(taskCtx, cred.CookieHeader, req.Prompt, req.Model, req.Ratio, req.Style)
 			if err == nil {
 				_ = s.MarkSuccess(cred.ID)
@@ -185,6 +212,7 @@ func GenerateImageWithPool(ctx context.Context, s *Service, req ImageRequest) (*
 				_, _, _ = s.MarkFailed(cred.ID, MarkFailedOptions{
 					Kind: pe.classified.Kind, Message: pe.classified.Message,
 				})
+				maybeOpenManualVerify(s, cred.ID, pe.classified)
 			}
 			return nil, pe
 		}()
@@ -237,18 +265,22 @@ func GenerateVideoWithPool(ctx context.Context, s *Service, req VideoRequest) (*
 		if err != nil {
 			// 已有真实上游失败时保留原始错误，不被「无号可取」覆盖。
 			if attempt > 0 {
-				return nil, fmt.Errorf("%s（账号池已无可用账号）", lastErr.Error())
+				return nil, fmt.Errorf("%s（已换号重试，池内无其他可用账号）", lastErr.Error())
 			}
 			return nil, err
+		}
+		if req.OnAccountPicked != nil {
+			req.OnAccountPicked(cred.Site, cred.Label)
 		}
 		// 生成在闭包内完成：无论成功、失败还是换号，都释放账号占用，
 		// 让并行任务能立刻领到空闲账号。
 		result, pe := func() (*VideoResult, *poolError) {
 			defer s.ReleaseAccount(cred.ID)
 			// 按取到账号的站点切换域名（豆包 / Dola 同协议双站点），
-			// 并注入该账号绑定的出站代理（空 = 直连）。
+			// 并注入该账号绑定的出站代理（空 = 直连）与登录浏览器指纹。
 			taskCtx := WithOrigin(ctx, siteOrigin(cred.Site))
 			taskCtx = WithProxy(taskCtx, cred.ProxyURL)
+			taskCtx = WithFingerprint(taskCtx, cred.Fingerprint())
 			result, err := generateVideoOnce(taskCtx, cred.CookieHeader, req.Prompt, req.Model, duration, ratio)
 			if err == nil {
 				_ = s.MarkSuccess(cred.ID)
@@ -271,6 +303,7 @@ func GenerateVideoWithPool(ctx context.Context, s *Service, req VideoRequest) (*
 			pe := classifyOnce(err)
 			if pe.classified != nil {
 				_, _, _ = s.MarkFailed(cred.ID, markFailedOptionsFor(pe.classified))
+				maybeOpenManualVerify(s, cred.ID, pe.classified)
 			}
 			// 失败轨迹记到后端日志：站点/账号 + 全程环节，定位卡点用。
 			var vf *VideoFailure
@@ -407,10 +440,10 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 			return nil, fmt.Errorf("视频任务提交失败：%s", truncate(lastText, 200))
 		}
 		if !isAcceptance(lastText) && !didConfirm {
-			if hardFailurePatterns.MatchString(lastText) {
-				return nil, fmt.Errorf("%s", truncate(lastText, 300))
-			}
-			return nil, fmt.Errorf("视频任务提交失败：%s", truncate(lastText, 200))
+			// 追问/拒绝文案都不是终态（实测先追问、先拒绝，视频随后仍写进
+			// 会话页）：给一个短宽限窗只扫会话页等晚到视频，仍无片才把豆包
+			// 回复当失败原因。不立即判负，避免错杀实际已出片的任务。
+			return waitLateVideo(ctx, cookieHeader, convID, tabID, known, lastText, trace, 6*time.Minute)
 		}
 		// 已受理但无任务号：轮询会话页面取结果（视频异步写进会话）。
 		select {
@@ -432,6 +465,7 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 	lastMessage := lastText
 	lastTraceText := lastText
 	lastBlockMsg := ""
+	rejectionMsg := ""
 	pageScans := 0
 	for rounds := 1; time.Now().Before(deadline); rounds++ {
 		pollRaw, err := samanthaPost(ctx, cookieHeader, asyncStreamPath, map[string]any{"task_id": taskID, "event_id": 0}, 3*time.Minute, tabID, "text/event-stream")
@@ -487,10 +521,8 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 			}
 			continue
 		}
-		if hardFailurePatterns.MatchString(lastMessage) {
-			trace.Add("poll_hard_fail", truncate(lastMessage, 160))
-			return nil, fmt.Errorf("%s", truncate(lastMessage, 300))
-		}
+		// 先收视频、后判拒绝：拒绝文案与成片可能在同一轮回包里，
+		// 一旦本轮已带视频就按成功返回，绝不能让拒绝判定抢先生效。
 		videos := CollectVideos(pollEvents)
 		if len(videos) == 0 {
 			videos = CollectVideosLoose(pollRaw)
@@ -499,10 +531,31 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 			trace.Add("stream_video", fmt.Sprintf("round=%d count=%d", rounds, len(videos)))
 			return &VideoResult{URLs: metaURLs(preferWatermarkFree(videos)), Message: lastMessage, TaskID: taskID, ConvID: convID}, nil
 		}
+		// 轮询回复命中"生成失败/违规"等文案不是终态（实测先拒绝后仍出片，
+		// 且裸词"违规"会误伤"侵权/违规内容"拒绝文案）：只记录、降速续轮询，
+		// 直到出片或超时；超时未出片才把拒绝文案作为失败原因上报。
+		if hardFailurePatterns.MatchString(lastMessage) {
+			if rejectionMsg == "" {
+				rejectionMsg = truncate(lastMessage, 200)
+				trace.Add("poll_reject_seen", rejectionMsg)
+			}
+			log.Printf("[doubao] 轮询回复疑似拒绝（%s），继续等待出片", truncate(lastMessage, 120))
+			select {
+			case <-time.After(10 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			continue
+		}
 		// 混合轮询：async/stream 沉默不代表没出片——定期扫会话页兜底命中。
 		if convID != "" && rounds%6 == 0 {
 			pageScans++
 			if html, perr := fetchConversationPage(ctx, cookieHeader, convID, tabID); perr == nil && html != "" {
+				// 拒绝文案不是终态（实测先拒绝后仍出片）：只记录，超时未出片才上报。
+				if msg := pageRejectionMessage(html); msg != "" && rejectionMsg == "" {
+					rejectionMsg = msg
+					trace.Add("page_reject_seen", truncate(msg, 160))
+				}
 				var fresh []videoMeta
 				for _, v := range ExtractVideosFromPage(html) {
 					if !known[v.URL] {
@@ -540,7 +593,12 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 			}
 			html, err := fetchConversationPage(ctx, cookieHeader, convID, tabID)
 			scans++
-			if err == nil && html != "" {
+		if err == nil && html != "" {
+			// 拒绝文案不是终态（实测先拒绝后仍出片）：只记录，超时未出片才上报。
+			if msg := pageRejectionMessage(html); msg != "" && rejectionMsg == "" {
+				rejectionMsg = msg
+				trace.Add("page_reject_seen", truncate(msg, 160))
+			}
 				var fresh []videoMeta
 				for _, v := range ExtractVideosFromPage(html) {
 					if !known[v.URL] {
@@ -569,6 +627,9 @@ func generateVideoOnce(ctx context.Context, cookieHeader, prompt, model string, 
 		}
 	}
 	trace.Add("timeout", truncate(lastMessage, 160))
+	if rejectionMsg != "" {
+		return nil, fmt.Errorf("%s豆包曾回复「%s」但等待超时仍未出片；若提示词含版权角色、真人肖像等敏感内容，请调整后重试", prefixText(lastMessage), rejectionMsg)
+	}
 	return nil, fmt.Errorf("%s视频已提交但等待超时，请稍后在豆包网页端查看，或重试", prefixText(lastMessage))
 }
 
@@ -588,13 +649,72 @@ func metaURLs(list []videoMeta) []string {
 	return out
 }
 
+// pageRejectionMessage 会话页出现内容安全拒绝文案（"疑似包含侵权/违规内容…
+// 生成额度未扣除"）时返回提示语。实测该文案不是终态：豆包可能先回拒绝、
+// 随后仍把视频生成出来，因此调用方只记录、不中止——等待全程结束仍未出片
+// 时，才把它作为失败原因上报。拒绝是提示词级判定，不算账号失败，不冷却、
+// 不换号。
+func pageRejectionMessage(html string) string {
+	if contentRejectPatterns.MatchString(html) {
+		return "豆包提示内容疑似侵权/违规（生成额度未扣除）"
+	}
+	return ""
+}
+
+// waitLateVideo 豆包回了追问/拒绝文字且没有任务号时的宽限等待：实测这类
+// 回复不是终态，视频可能仍异步写进会话页。窗口内每 20 秒扫一次会话页，
+// 出片即返回；到点仍无片才以 doubaoText 为失败原因（普通错误，不算账号失败）。
+func waitLateVideo(ctx context.Context, cookieHeader, convID, tabID string, known map[string]bool, doubaoText string, trace *VideoTrace, window time.Duration) (*VideoResult, error) {
+	deadline := time.Now().Add(window)
+	scans := 0
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		html, err := fetchConversationPage(ctx, cookieHeader, convID, tabID)
+		scans++
+		if err == nil && html != "" {
+			var fresh []videoMeta
+			for _, v := range ExtractVideosFromPage(html) {
+				if !known[v.URL] {
+					fresh = append(fresh, v)
+				}
+			}
+			if scans%8 == 1 {
+				trace.Add("late_wait", fmt.Sprintf("scan=%d html=%d fresh=%d", scans, len(html), len(fresh)))
+			}
+			if len(fresh) > 0 {
+				trace.Add("late_video", fmt.Sprintf("scan=%d count=%d", scans, len(fresh)))
+				return &VideoResult{URLs: metaURLs(preferWatermarkFree(fresh)), Message: doubaoText, ConvID: convID}, nil
+			}
+		} else if scans%8 == 1 {
+			trace.Add("late_wait", fmt.Sprintf("scan=%d error=%v", scans, err))
+		}
+		select {
+		case <-time.After(20 * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	trace.Add("late_timeout", truncate(doubaoText, 160))
+	return nil, fmt.Errorf("视频任务提交失败：%s", truncate(doubaoText, 300))
+}
+
 // pollConversationVideos 轮询会话页面直到出现新视频。
 func pollConversationVideos(ctx context.Context, cookieHeader, convID, tabID string, known map[string]bool, lastText string, trace *VideoTrace) (*VideoResult, error) {
-	// 实测豆包 Seedance 出片可达 15-20 分钟，轮询窗口给足余量。
-	deadline := time.Now().Add(20 * time.Minute)
+	// 实测豆包 Seedance 出片可达 15-20 分钟；15 秒长档豆包自称"预计等待 10
+	// 分钟"但实际更慢，20 分钟窗口曾多次在出片前耗尽（任务在 ~21 分钟失败）。
+	// 放宽到 30 分钟；单账号最坏耗时 submit(≤7min)+本窗口(30min)≈37min，
+	// 仍在 worker 视频超时（默认 60 分钟）之内。
+	deadline := time.Now().Add(30 * time.Minute)
+	rejectionMsg := ""
 	for rounds := 1; time.Now().Before(deadline); rounds++ {
 		html, err := fetchConversationPage(ctx, cookieHeader, convID, tabID)
 		if err == nil && html != "" {
+			if msg := pageRejectionMessage(html); msg != "" && rejectionMsg == "" {
+				rejectionMsg = msg
+				trace.Add("page_reject_seen", truncate(msg, 160))
+			}
 			var fresh []videoMeta
 			for _, v := range ExtractVideosFromPage(html) {
 				if !known[v.URL] {
@@ -622,5 +742,8 @@ func pollConversationVideos(ctx context.Context, cookieHeader, convID, tabID str
 		}
 	}
 	trace.Add("page_timeout", truncate(lastText, 120))
+	if rejectionMsg != "" {
+		return nil, fmt.Errorf("%s豆包曾提示内容疑似侵权/违规，且等待超时仍未出片，请调整提示词后重试", prefixText(lastText))
+	}
 	return nil, fmt.Errorf("%s已等待出片但会话里仍未出现视频，视频可能仍在生成，请稍后在豆包网页端该会话查看，或重试", prefixText(lastText))
 }

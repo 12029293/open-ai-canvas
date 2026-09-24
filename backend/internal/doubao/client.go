@@ -28,6 +28,8 @@ import (
 	"sync"
 	"time"
 
+	"infinite-canvas/backend/internal/outbound"
+
 	"golang.org/x/net/proxy"
 )
 
@@ -68,8 +70,20 @@ var (
 	rateLimitPatterns = regexp.MustCompile(`rate\s*limited|shark_admin|710022004|710022002|710012001|verify_scene|系统错误|操作过于频繁|请求过于频繁|当前服务访问频繁|服务访问频繁|请稍后重试`)
 	sessionExpiredPatterns = regexp.MustCompile(`user invalid|login invalid|登录态失效|Invalid User ID`)
 	hardFailurePatterns = regexp.MustCompile(`生成失败|内容不适宜|违规|敏感内容|无法完成该任务|已被拦截`)
+	// contentRejectPatterns 上游内容安全拒绝生成的终态文案（App 端提示"生成内容中
+	// 疑似包含侵权/违规内容，无法返回该内容…生成额度未扣除"）。这类拒绝是提示词级
+	// 判定：任务永远不会出片，且往往只出现在会话页面 / App 而不进 async 流——
+	// 轮询扫会话页时命中应立即失败（用特征短语而非单词"违规"，避免页面历史
+	// 消息误伤）。返回普通错误即可：不算账号失败，不进冷却、不换号。
+	contentRejectPatterns = regexp.MustCompile(`侵权/违规内容|无法返回该内容|生成额度未扣除`)
 	acceptancePatterns = regexp.MustCompile(`正在为您生成视频|视频生成好后|生成好后|预计等待|预计等|大约需要|我会主动发送|消耗每日免费额度|视频生成已提交`)
 	confirmAskExplicit = regexp.MustCompile(`确认后|确认了就|是否确认|确认按|请确认|待你确认|等你确认|你确认|确认一下|确认无误|生成吗|我就直接生成|按这个生成|如果你确认|如确认|确认我就`)
+	// confirmAskChoice / confirmAskParam 豆包以"选择题"口吻追问参数时不带"确认"
+	// 字眼（实测文案："这个表述还差一个关键参数：时长……请选择一个方向，我再
+	// 生成……你回我类似：'8秒，中年人物主题'即可"）。这类追问同样是等待参数
+	// 确认，应触发自动确认，否则任务只能白等宽限窗后把追问当失败原因。
+	confirmAskChoice = regexp.MustCompile(`还差.{0,8}参数|差一个关键参数|请选择.{0,10}(方向|参数)|你回我类似|回我.{0,16}即可|我再生成`)
+	confirmAskParam  = regexp.MustCompile(`时长|秒数|秒视频|比例|画幅|分辨率|主题|风格|尺寸`)
 )
 
 // ---------------------------------------------------------------- 设备指纹
@@ -109,8 +123,20 @@ func randomUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
-func buildQuery(sessionID, tabID string) url.Values {
+func buildQuery(ctx context.Context, sessionID, tabID string) url.Values {
 	fp := fingerprintFor(sessionID)
+	if accountFP := fingerprintFromCtx(ctx); accountFP != nil {
+		// 账号登录浏览器捕获的真实设备 ID 优先；逐字段回退派生值。
+		if accountFP.DeviceID != "" {
+			fp.DeviceID = accountFP.DeviceID
+		}
+		if accountFP.WebID != "" {
+			fp.WebID = accountFP.WebID
+		}
+		if accountFP.TeaUUID != "" {
+			fp.TeaUUID = accountFP.TeaUUID
+		}
+	}
 	q := url.Values{}
 	q.Set("aid", assistantID)
 	q.Set("device_id", fp.DeviceID)
@@ -175,6 +201,25 @@ func originFromCtx(ctx context.Context) string {
 	return doubaoOrigin
 }
 
+// secChUaFor 从 User-Agent 提取主版本号生成 Sec-Ch-Ua；
+// Edge UA（带 Edg/ 标记）用 Microsoft Edge 品牌——实测同一账号 Chrome 被顶点
+// 限流秒拒而 Edge 放行（03:25 用户实验），风控对 UA 品牌分支敏感；
+// 解析失败（非 Chrome/Edge UA）回退默认版本。
+func secChUaFor(ua string) string {
+	m := chromeMajorVersionPattern.FindStringSubmatch(ua)
+	if m == nil {
+		return secChUA
+	}
+	version := m[1]
+	brand := "Google Chrome"
+	if strings.Contains(ua, "Edg/") {
+		brand = "Microsoft Edge"
+	}
+	return `"` + brand + `";v="` + version + `", "Chromium";v="` + version + `", "Not_A Brand";v="24"`
+}
+
+var chromeMajorVersionPattern = regexp.MustCompile(`Chrome/(\d+)`)
+
 func buildBrowserHeaders(ctx context.Context, cookieHeader string) http.Header {
 	origin := originFromCtx(ctx)
 	h := http.Header{}
@@ -186,15 +231,23 @@ func buildBrowserHeaders(ctx context.Context, cookieHeader string) http.Header {
 	h.Set("Origin", origin)
 	h.Set("Pragma", "no-cache")
 	h.Set("Referer", origin+"/chat/")
-	h.Set("Sec-Ch-Ua", secChUA)
 	h.Set("Sec-Ch-Ua-Mobile", "?0")
 	h.Set("Sec-Ch-Ua-Platform", `"Windows"`)
 	h.Set("Sec-Fetch-Dest", "empty")
 	h.Set("Sec-Fetch-Mode", "cors")
 	h.Set("Sec-Fetch-Site", "same-origin")
-	h.Set("User-Agent", userAgent)
 	h.Set("Priority", "u=1, i")
 	h.Set("Agw-Js-Conv", "str")
+	// 优先用账号登录时的真实浏览器 UA（Sec-Ch-Ua 随版本对齐），
+	// Cookie 导入等没有指纹的账号回退默认 UA。
+	ua := userAgent
+	secChUa := secChUA
+	if accountFP := fingerprintFromCtx(ctx); accountFP != nil && accountFP.UserAgent != "" {
+		ua = accountFP.UserAgent
+		secChUa = secChUaFor(ua)
+	}
+	h.Set("User-Agent", ua)
+	h.Set("Sec-Ch-Ua", secChUa)
 	if csrf := cookieValue(cookieHeader, "passport_csrf_token"); csrf != "" {
 		h.Set("X-Tt-Passport-Csrf-Token", csrf)
 	}
@@ -274,7 +327,8 @@ func clientForProxy(ctx context.Context) *http.Client {
 			password, _ := parsed.User.Password()
 			auth = &proxy.Auth{User: parsed.User.Username(), Password: password}
 		}
-		dialer, dialErr := proxy.SOCKS5("tcp", parsed.Host, auth, proxy.Direct)
+		// 转发拨号并行竞速：代理商多 IP 解析时避免串行撞死 IP 耗尽超时。
+		dialer, dialErr := proxy.SOCKS5("tcp", parsed.Host, auth, outbound.ParallelDialer{})
 		if dialErr != nil {
 			log.Printf("[doubao] SOCKS5 拨号器构建失败，回退直连：%.120s", dialErr)
 			return httpClient
@@ -298,7 +352,7 @@ func clientForProxy(ctx context.Context) *http.Client {
 
 // samanthaPost 发起一次 samantha 请求，返回完整响应文本（SSE 或 JSON）。
 func samanthaPost(ctx context.Context, cookieHeader, apiPath string, body any, timeout time.Duration, tabID string, accept string) (string, error) {
-	qs := buildQuery(cookieHeader, tabID).Encode()
+	qs := buildQuery(ctx, cookieHeader, tabID).Encode()
 	reqURL := originFromCtx(ctx) + apiPath + "?" + qs
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -508,8 +562,9 @@ func unwrapEventData(ev SSEEvent) map[string]any {
 var streamErrorReasons = map[int64]string{
 	710022002: "当前服务访问频繁（顶点限流）",
 	// 710022004 实为 shark_admin 内容安全验证（decision.type=verify，滑块/语义审核），
-	// HTTP 直连无法代替完成，需该账号在豆包网页端过一次验证后才能继续生成。
-	710022004: "豆包要求安全验证（710022004）：请用该账号登录 www.doubao.com 网页版，随便发一条消息并完成弹出的滑块/安全验证，然后回来重试",
+	// HTTP 直连无法代替完成：后端会自动弹出预注入该账号 Cookie 的验证窗口，
+	// 用户在窗口内过一次验证并保存后即可继续生成（见 manual_verify.go）。
+	710022004: "豆包要求安全验证（710022004）：已自动弹出验证窗口，请在窗口中用该账号随便发一条消息并完成滑块/安全验证，然后到「账号池」页点「完成验证，保存 Cookie」，稍后重试",
 	710012001: "登录态失效（login invalid）",
 	710012000: "登录态失效（user invalid，Cookie 已过期）",
 	710082041: "创作任务需要澄清确认",
@@ -1355,6 +1410,10 @@ func isConfirmAsk(text string) bool {
 	if confirmAskExplicit.MatchString(t) {
 		return true
 	}
+	// 选择题式追问（无"确认"字眼，追问时长/比例/主题等参数）也应自动确认。
+	if confirmAskChoice.MatchString(t) && confirmAskParam.MatchString(t) {
+		return true
+	}
 	return (strings.Contains(t, "确认") || strings.Contains(t, "确定好") || strings.Contains(t, "定下来")) &&
 		regexp.MustCompile(`生成|参数|比例|时长|画幅|分辨率`).MatchString(t)
 }
@@ -1449,7 +1508,7 @@ func pickFreshThreadID(threads []threadInfo, sinceMs int64, strict bool) string 
 }
 
 func fetchConversationPage(ctx context.Context, cookieHeader, conversationID, tabID string) (string, error) {
-	qs := buildQuery(cookieHeader, tabID).Encode()
+	qs := buildQuery(ctx, cookieHeader, tabID).Encode()
 	reqURL := fmt.Sprintf("%s/chat/%s?%s", originFromCtx(ctx), url.PathEscape(conversationID), qs)
 	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()

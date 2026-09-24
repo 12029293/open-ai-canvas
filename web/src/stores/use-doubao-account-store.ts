@@ -136,9 +136,9 @@ export function effectiveStatus(account: DoubaoAccount): DoubaoAccountStatus {
     return account.state;
 }
 
-export const DOUBAO_STATUS_META: Record<DoubaoAccountStatus, { label: string; color: string; kind: "success" | "warning" | "error" | "default" }> = {
-    ready: { label: "可用", color: "green", kind: "success" },
-    cooling: { label: "冷却中", color: "gold", kind: "warning" },
-    expired: { label: "登录失效", color: "red", kind: "error" },
-    disabled: { label: "已停用", color: "default", kind: "default" },
+export const DOUBAO_STATUS_META: Record<DoubaoAccountStatus, { label: string; kind: "success" | "warning" | "error" | "default" }> = {
+    ready: { label: "可用", kind: "success" },
+    cooling: { label: "冷却中", kind: "warning" },
+    expired: { label: "登录失效", kind: "error" },
+    disabled: { label: "已停用", kind: "default" },
 };

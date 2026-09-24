@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -267,6 +269,20 @@ type ActiveCredential struct {
 	SessionID    string `json:"sessionId"`
 	CookieHeader string `json:"cookieHeader"`
 	ProxyURL     string `json:"proxyUrl,omitempty"`
+	// 登录浏览器指纹（扫码登录时捕获，可为空）；生成请求按账号注入。
+	UserAgent string `json:"userAgent,omitempty"`
+	DeviceID  string `json:"deviceId,omitempty"`
+	WebID     string `json:"webId,omitempty"`
+	TeaUUID   string `json:"teaUuid,omitempty"`
+}
+
+// Fingerprint 返回账号登录指纹；全空时返回 nil（走派生指纹）。
+func (c *ActiveCredential) Fingerprint() *AccountFingerprint {
+	fp := &AccountFingerprint{UserAgent: c.UserAgent, DeviceID: c.DeviceID, WebID: c.WebID, TeaUUID: c.TeaUUID}
+	if fp.empty() {
+		return nil
+	}
+	return fp
 }
 
 // Service 豆包账号池。所有写操作在互斥锁 + 事务内完成，
@@ -277,6 +293,12 @@ type Service struct {
 	// busy 在生成中的账号占用计数：一个账号同一时间只领一个生成任务，
 	// 取号时跳过占用中的账号（配合 LRU 轮转实现多账号并行、依次循环）。
 	busy map[string]int
+	// verifyMu/verify 手动过验证会话（710022004 风控）：全局单会话，
+	// 一次只开一个验证浏览器窗口。见 manual_verify.go。
+	verifyMu sync.Mutex
+	verify   *verifySession
+	// fpRefreshMu 补抓指纹互斥：一次只开一个补抓浏览器窗口。见 fingerprint_refresh.go。
+	fpRefreshMu sync.Mutex
 }
 
 // NewService 创建账号池服务。
@@ -463,6 +485,8 @@ type UpsertInput struct {
 	Tags       []string
 	Note       string
 	SetActive  bool
+	// 登录浏览器指纹（扫码登录 / 手动过验证时捕获，可选）。
+	Fingerprint *AccountFingerprint
 }
 
 // Upsert 新增或更新账号（同一 sessionid 视为更新）。
@@ -498,10 +522,17 @@ func (s *Service) Upsert(input UpsertInput) (*AccountView, error) {
 			existing.CookieHeader = cookieHeader
 			existing.Source = source
 			existing.UpdatedAt = now
-			// 扫码登录带的昵称只覆盖默认名/空名，保留用户手动改过的显示名；
-			// 手动添加时传入的 Label 仍按原语义直接覆盖。
-			if input.Label != "" && (source != "qr" || existing.Label == "" || IsDefaultLabel(existing.Label)) {
+			// 扫码登录提取到豆包昵称时，显示名一律换成豆包账号名（含覆盖手动改过的名字）；
+			// 昵称提取失败为空时保留原名。手动添加传入的 Label 仍按原语义直接覆盖。
+			if input.Label != "" {
 				existing.Label = input.Label
+			}
+			// 登录指纹随 Cookie 一起刷新：重新登录说明换了浏览器环境。
+			if input.Fingerprint != nil {
+				existing.UserAgent = input.Fingerprint.UserAgent
+				existing.DeviceID = input.Fingerprint.DeviceID
+				existing.WebID = input.Fingerprint.WebID
+				existing.TeaUUID = input.Fingerprint.TeaUUID
 			}
 			existing.CooldownUntil = nil
 			existing.LastError = ""
@@ -539,6 +570,12 @@ func (s *Service) Upsert(input UpsertInput) (*AccountView, error) {
 				Note:         input.Note,
 				CreatedAt:    now,
 				UpdatedAt:    now,
+			}
+			if input.Fingerprint != nil {
+				existing.UserAgent = input.Fingerprint.UserAgent
+				existing.DeviceID = input.Fingerprint.DeviceID
+				existing.WebID = input.Fingerprint.WebID
+				existing.TeaUUID = input.Fingerprint.TeaUUID
 			}
 			if existing.Label == "" {
 				existing.Label = fmt.Sprintf("%s账号 %d", siteDisplayName(site), count+1)
@@ -1030,7 +1067,27 @@ func (s *Service) PickSite(site string, preferID string) (*ActiveCredential, err
 			proxyURL = resolved
 		}
 	}
-	return &ActiveCredential{ID: chosen.ID, Label: chosen.Label, Site: chosen.Site, SessionID: chosen.SessionID, CookieHeader: chosen.CookieHeader, ProxyURL: proxyURL}, nil
+	// 每次取号记录实际出站链路（代理只落 host:port，不落凭据），
+	// 便于排查「任务到底走的哪个出口」。
+	log.Printf("[doubao] 取号 label=%s site=%s 出口=%s", chosen.Label, chosen.Site, proxyEndpoint(proxyURL))
+	return &ActiveCredential{
+		ID: chosen.ID, Label: chosen.Label, Site: chosen.Site,
+		SessionID: chosen.SessionID, CookieHeader: chosen.CookieHeader, ProxyURL: proxyURL,
+		UserAgent: chosen.UserAgent, DeviceID: chosen.DeviceID, WebID: chosen.WebID, TeaUUID: chosen.TeaUUID,
+	}, nil
+}
+
+// proxyEndpoint 从代理 URL 提取协议 + host:port，隐藏用户名密码；空串表示直连。
+func proxyEndpoint(proxyURL string) string {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return "直连"
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || parsed.Host == "" {
+		return "代理(格式无效)"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // NoteDolaVideoSuccess 视频成功出片后累计 Dola 账号当日条数；归属日跨天时先归零。

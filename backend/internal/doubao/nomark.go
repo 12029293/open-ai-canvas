@@ -247,7 +247,7 @@ func (f *flexInt) UnmarshalJSON(data []byte) error {
 // postMediaInfo 调一次豆包媒体接口，返回原始响应体。
 func postMediaInfo(ctx context.Context, cookieHeader, apiPath string, body map[string]any) ([]byte, error) {
 	tabID := randomUUID()
-	reqURL := originFromCtx(ctx) + apiPath + "?" + buildQuery(cookieHeader, tabID).Encode()
+	reqURL := originFromCtx(ctx) + apiPath + "?" + buildQuery(ctx, cookieHeader, tabID).Encode()
 	cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	payload, err := json.Marshal(body)

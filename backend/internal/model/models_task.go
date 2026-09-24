@@ -34,6 +34,8 @@ type Task struct {
 	RouteRun                  int                  `json:"-" gorm:"index"`
 	BillingOrderID            string               `json:"billingOrderId,omitempty" gorm:"index;size:36"`
 	ProviderRequestID         string               `json:"providerRequestId,omitempty" gorm:"index;size:160"`
+	// ProviderAccount 账号池渠道（豆包 / Dola）当前取用的账号名，取号后回填，画布节点展示用。
+	ProviderAccount           string               `json:"providerAccount,omitempty" gorm:"size:120"`
 	ProviderCancelStatus      ProviderCancelStatus `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`
 	ProviderCancelError       string               `json:"providerCancelError,omitempty" gorm:"type:text"`
 	ProviderCancelAttempts    int                  `json:"providerCancelAttempts,omitempty"`

@@ -1,5 +1,5 @@
 // 扫码登录成功后，从已登录页面提取当前账号的豆包昵称，用作账号池显示名。
-// 提取是尽力而为：任何一步失败都返回空串，Upsert 回退到默认命名（「豆包账号 N」）。
+// 提取是尽力而为：任何一步失败都返回空串，Upsert 保留原有显示名（新账号回退到默认命名「豆包账号 N」）。
 //
 // 取值优先级：
 //  1. 同源 fetch 字节系 passport 账号信息接口（data.screen_name / nickname 等）；
@@ -101,13 +101,4 @@ func sanitizeNickname(raw string) string {
 		s = string(runes[:32])
 	}
 	return s
-}
-
-// defaultLabelPattern 默认自动命名的账号显示名（「豆包账号 1」等）。
-// 扫码重登时只有默认名才被昵称覆盖，保留用户手动改过的名字。
-var defaultLabelPattern = regexp.MustCompile(`^(豆包|即梦|Dola)账号 \d+$`)
-
-// IsDefaultLabel 判断是否为池子自动生成的默认显示名。
-func IsDefaultLabel(label string) bool {
-	return defaultLabelPattern.MatchString(strings.TrimSpace(label))
 }

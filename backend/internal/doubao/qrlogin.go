@@ -3,6 +3,7 @@ package doubao
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -332,14 +333,27 @@ func (m *QRLoginManager) run(ctx context.Context, session *qrSession) {
 			full = cookies
 		}
 		cookieHeader := buildCookieHeaderFromRod(full)
-		// 从已登录页面抓当前账号昵称作显示名；抓不到时 Upsert 回退默认命名。
+		// 从已登录页面抓当前账号昵称，登录成功后显示名一律换成豆包账号名；抓不到时保留原名。
 		nickname := pageNickname(page)
+		// 同页捕获登录浏览器指纹（UA + 设备 ID）：生成请求复用真实浏览器环境，
+		// 降低新账号被上游顶点限流（710022002）的概率。UA 兜底取浏览器版本信息。
+		uaFallback := ""
+		if bver, verr := page.Browser().Version(); verr == nil && bver != nil {
+			uaFallback = bver.UserAgent
+		}
+		fp, fpDiag := pageFingerprint(page, uaFallback)
+		if fp != nil {
+			log.Printf("[doubao] 登录指纹已捕获 site=%s ua=%.80s web_id=%s device_id=%s", m.site, fp.UserAgent, fp.WebID, fp.DeviceID)
+		} else {
+			log.Printf("[doubao] 登录指纹未捕获 site=%s reason=%s（该账号回退派生指纹，可用「补抓指纹」修复）", m.site, fpDiag)
+		}
 		account, err := m.pool.Upsert(UpsertInput{
-			Cookie:    cookieHeader,
-			Site:      m.site,
-			Label:     nickname,
-			Source:    "qr",
-			SetActive: true,
+			Cookie:      cookieHeader,
+			Site:        m.site,
+			Label:       nickname,
+			Source:      "qr",
+			SetActive:   true,
+			Fingerprint: fp,
 		})
 		if err != nil {
 			session.update(QRFailed, "登录成功但写入账号池失败："+err.Error())

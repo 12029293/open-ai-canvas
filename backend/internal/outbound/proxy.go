@@ -104,7 +104,8 @@ func HTTPClientFromContext(ctx context.Context, timeout time.Duration) *http.Cli
 func newProxyTransport(parsed *url.URL) *http.Transport {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
+		// 代理地址也可能多 IP 解析，拨号同样并行竞速。
+		DialContext:           ParallelDialer{Base: dialer}.DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   20,
@@ -119,7 +120,7 @@ func newProxyTransport(parsed *url.URL) *http.Transport {
 		transport.Proxy = http.ProxyURL(parsed)
 		proxyHost := parsed.Hostname()
 		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			conn, err := dialer.DialContext(ctx, network, parsed.Host)
+			conn, err := ParallelDialer{Base: dialer}.DialContext(ctx, network, parsed.Host)
 			if err != nil {
 				return nil, err
 			}
@@ -136,7 +137,9 @@ func newProxyTransport(parsed *url.URL) *http.Transport {
 			password, _ := parsed.User.Password()
 			auth = &proxy.Auth{User: parsed.User.Username(), Password: password}
 		}
-		socksDialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, dialer)
+		// 代理商域名常多 IP 轮询解析且部分节点可能不可达，转发拨号用并行竞速，
+		// 避免串行撞上死 IP 耗尽整体超时。
+		socksDialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, ParallelDialer{Base: dialer})
 		if err != nil {
 			return nil
 		}

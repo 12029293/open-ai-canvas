@@ -361,6 +361,7 @@ export type CanvasNodeMetadata = {
     taskProgress?: number;
     taskStage?: string;
     taskProvider?: string;
+    taskAccount?: string;
     taskStartedAt?: string;
     taskCompletedAt?: string;
     taskDurationMs?: number;

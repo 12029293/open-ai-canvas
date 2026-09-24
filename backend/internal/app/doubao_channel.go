@@ -95,13 +95,13 @@ func (s *Service) runDoubaoPoolVideoTask(ctx context.Context, input canvasGenera
 		}
 	}
 	site := doubaoPoolSiteForSelection(input.Config.ChannelID, input.Config.Model)
-	result, err := s.DoubaoGenerateVideo(ctx, DoubaoGenerateVideoRequest{
+	result, err := s.doubaoGenerateVideo(ctx, DoubaoGenerateVideoRequest{
 		Prompt:   input.Prompt,
 		Model:    doubaoPoolVideoVariant(input.Config.Model),
 		Duration: duration,
 		Ratio:    strings.TrimSpace(input.Config.Size),
 		Site:     site,
-	})
+	}, s.trackTaskAccount(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -117,10 +117,10 @@ func (s *Service) runDoubaoPoolVideoTask(ctx context.Context, input canvasGenera
 
 // runDoubaoPoolImageTask 文生图：池内取号生成，全部产物转 dataUrl。
 func (s *Service) runDoubaoPoolImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	result, err := s.DoubaoGenerateImage(ctx, DoubaoGenerateImageRequest{
+	result, err := s.doubaoGenerateImage(ctx, DoubaoGenerateImageRequest{
 		Prompt: input.Prompt,
 		Ratio:  strings.TrimSpace(input.Config.Size),
-	})
+	}, s.trackTaskAccount(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +173,19 @@ func (s *Service) logDoubaoVideoFailure(userID string, ctx context.Context, err 
 		return
 	}
 	_ = s.log(userID, taskID, "warn", "豆包视频会话轨迹", vf.Trace.JSON())
+}
+
+// trackTaskAccount 把每次取到的账号名回填到当前任务记录：画布生成中节点
+// 显示「账号名」而不是任务 ID 截断。任务 ID 从执行上下文取；不在任务执行
+// 链路里的调用（如设置页的手动试生成）拿不到任务 ID，回调即空操作。
+func (s *Service) trackTaskAccount(ctx context.Context) func(site, label string) {
+	taskID := taskExecutionID(ctx)
+	if taskID == "" {
+		return nil
+	}
+	return func(_, label string) {
+		_ = s.repo.UpdateTaskProviderAccount(taskID, label)
+	}
 }
 
 func parsePositiveInt(value string) (int, error) {

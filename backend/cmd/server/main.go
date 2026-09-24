@@ -157,12 +157,22 @@ func run(ctx context.Context) error {
 	displayURL := fmt.Sprintf("http://%s", listener.Addr())
 	log.Printf("backend listening on %s", displayURL)
 
-	// 桌面版：打开 WebView2 窗口（失败回退默认浏览器），窗口关闭即触发优雅退出。
+	// 桌面版：默认打开 WebView2 窗口（失败回退默认浏览器），窗口关闭即触发优雅退出。
+	// CANVAS_DESKTOP_UI=browser 时不开窗口，直接用系统默认浏览器打开（适合偏好浏览器操作的用户）；
+	// 此模式没有"窗口关闭"信号，关闭控制台窗口即退出。
 	// runCtx 在原 ctx（Ctrl+C 信号）基础上叠加"窗口已关闭"这一退出条件。
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	if desktopBuild {
 		go func() {
+			if strings.EqualFold(strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_UI")), "browser") {
+				if err := desktopui.OpenBrowser(displayURL); err != nil {
+					log.Printf("desktop browser open failed: %v (service still running at %s)", err, displayURL)
+					return
+				}
+				log.Printf("browser mode: use %s in your browser; close this console window to stop the app", displayURL)
+				return
+			}
 			if err := desktopui.ShowWindow("影策工作台", displayURL); err != nil {
 				log.Printf("desktop window failed: %v (service still running at %s)", err, displayURL)
 				return

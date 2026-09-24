@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -130,6 +131,11 @@ func (c *pluginRuntime) bootstrapBuiltInPlugins() error {
 	}
 	officialDir, err := officialPluginPackageDir()
 	if err != nil {
+		if errors.Is(err, errOfficialPluginDirUnavailable) {
+			// 未部署官方插件目录（如桌面单机版）：跳过内置插件引导，已安装插件仍可用。
+			log.Printf("official plugin-packages directory not found; skipping bundled plugin bootstrap (installed plugins still work)")
+			return nil
+		}
 		return err
 	}
 	entries, err := os.ReadDir(officialDir)
@@ -256,6 +262,11 @@ func isBuiltInPluginSource(source string) bool {
 	}
 }
 
+// errOfficialPluginDirUnavailable 表示没有部署官方插件目录（如桌面单机版）。
+// 与"显式配置了 CANVAS_OFFICIAL_PLUGIN_DIR 但目录不可读"不同：前者可降级启动，
+// 后者是部署错误必须硬失败。
+var errOfficialPluginDirUnavailable = errors.New("未找到官方 plugin-packages 目录")
+
 func officialPluginPackageDir() (string, error) {
 	if configured := strings.TrimSpace(os.Getenv("CANVAS_OFFICIAL_PLUGIN_DIR")); configured != "" {
 		info, err := os.Stat(configured)
@@ -283,7 +294,7 @@ func officialPluginPackageDir() (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", errors.New("未找到官方 plugin-packages 目录；请设置 CANVAS_OFFICIAL_PLUGIN_DIR")
+	return "", errOfficialPluginDirUnavailable
 }
 
 func (c *pluginRuntime) reload() error {

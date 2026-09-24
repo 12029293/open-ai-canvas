@@ -58,6 +58,29 @@ func (s *Service) DoubaoQrCancel(site string) error {
 	return s.doubaoQrLogin(site).Cancel()
 }
 
+// 手动过验证（710022004 风控）：会话挂在账号池对象上（全局单会话），
+// 见 doubao/manual_verify.go。
+func (s *Service) DoubaoVerifyStart(id string) (doubao.VerifyView, bool, error) {
+	return s.doubaoPool().StartManualVerify(id)
+}
+
+func (s *Service) DoubaoVerifyStatus() doubao.VerifyView {
+	return s.doubaoPool().ManualVerifyStatus()
+}
+
+func (s *Service) DoubaoVerifyCapture() (doubao.VerifyView, error) {
+	return s.doubaoPool().CaptureManualVerify()
+}
+
+func (s *Service) DoubaoVerifyCancel() error {
+	return s.doubaoPool().CancelManualVerify()
+}
+
+// DoubaoRefreshFingerprint 补抓账号浏览器指纹（见 doubao/fingerprint_refresh.go）。
+func (s *Service) DoubaoRefreshFingerprint(id string) (*doubao.AccountView, error) {
+	return s.doubaoPool().RefreshFingerprint(id)
+}
+
 func (s *Service) DoubaoPoolStatus(site string) (*doubao.PoolStatus, error) {
 	return s.doubaoPool().Status(site)
 }
@@ -153,8 +176,15 @@ type DoubaoGenerateImageRequest struct {
 }
 
 func (s *Service) DoubaoGenerateImage(ctx context.Context, req DoubaoGenerateImageRequest) (*doubao.ImageResult, error) {
+	return s.doubaoGenerateImage(ctx, req, nil)
+}
+
+// doubaoGenerateImage 生成豆包图片；onAccountPicked 非空时在每次取号后回调，
+// 用于把当前使用的账号名回填到任务记录（画布节点展示用）。
+func (s *Service) doubaoGenerateImage(ctx context.Context, req DoubaoGenerateImageRequest, onAccountPicked func(site, label string)) (*doubao.ImageResult, error) {
 	return doubao.GenerateImageWithPool(ctx, s.doubaoPool(), doubao.ImageRequest{
 		Prompt: req.Prompt, Model: req.Model, Ratio: req.Ratio, Style: req.Style,
+		OnAccountPicked: onAccountPicked,
 	})
 }
 
@@ -168,7 +198,14 @@ type DoubaoGenerateVideoRequest struct {
 }
 
 func (s *Service) DoubaoGenerateVideo(ctx context.Context, req DoubaoGenerateVideoRequest) (*doubao.VideoResult, error) {
+	return s.doubaoGenerateVideo(ctx, req, nil)
+}
+
+// doubaoGenerateVideo 生成豆包视频；onAccountPicked 非空时在每次取号后回调，
+// 用于把当前使用的账号名回填到任务记录（画布节点展示用）。
+func (s *Service) doubaoGenerateVideo(ctx context.Context, req DoubaoGenerateVideoRequest, onAccountPicked func(site, label string)) (*doubao.VideoResult, error) {
 	return doubao.GenerateVideoWithPool(ctx, s.doubaoPool(), doubao.VideoRequest{
 		Prompt: req.Prompt, Model: req.Model, Duration: req.Duration, Ratio: req.Ratio, Site: req.Site,
+		OnAccountPicked: onAccountPicked,
 	})
 }

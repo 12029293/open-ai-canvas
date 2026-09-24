@@ -56,6 +56,7 @@ type CanvasNodeProps = {
     onRetry?: (node: CanvasNodeData) => void;
     onReloadResource?: (node: CanvasNodeData) => void;
     onOpenTaskDetails?: (node: CanvasNodeData) => void;
+    onCancelTask?: (node: CanvasNodeData) => void;
     onOpenVersions?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
@@ -104,6 +105,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onRetry,
     onReloadResource,
     onOpenTaskDetails,
+    onCancelTask,
     onOpenVersions,
     onViewImage,
     onOpenTextEditor,
@@ -386,6 +388,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onRetry={onRetry}
                         onReloadResource={onReloadResource}
                         onOpenTaskDetails={onOpenTaskDetails}
+                        onCancelTask={onCancelTask}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         reduceMediaEffects={reduceMediaEffects}
                         mediaActive={mediaActive}
@@ -529,6 +532,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onRetry === next.onRetry &&
         previous.onReloadResource === next.onReloadResource &&
         previous.onOpenTaskDetails === next.onOpenTaskDetails &&
+        previous.onCancelTask === next.onCancelTask &&
         previous.onOpenVersions === next.onOpenVersions &&
         previous.onViewImage === next.onViewImage &&
         previous.onReplaceMedia === next.onReplaceMedia &&
