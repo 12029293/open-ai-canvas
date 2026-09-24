@@ -7,7 +7,7 @@
 <p align="center">让一个故事，从文字走向银幕</p>
 
 <p align="center">
-  <a href="https://github.com/ddcat-ai/open-ai-canvas">GitHub</a> ·
+  <a href="https://github.com/12029293/open-ai-canvas">GitHub</a> ·
   <a href="docs/content/docs/overview/features.mdx">功能</a> ·
   <a href="docs/content/docs/overview/quick-start.mdx">文档</a> ·
   <a href="SECURITY.md">安全策略</a>
@@ -17,9 +17,25 @@
 
 > 项目仍在快速开发，数据结构和外部接口可能调整。默认适合个人、本地或可信环境部署；未经安全配置，不要直接作为公网多人服务使用。
 
-在线演示：[https://ddcat.pronhubcn.com](https://ddcat.pronhubcn.com)
+## 关于本仓库（影策定制版）
 
-账号/密码：test/test123456
+本仓库是影策的作者自用定制版，在上游 [ddcat-ai/open-ai-canvas](https://github.com/ddcat-ai/open-ai-canvas) 的基础上进行了定制扩展。上游基线为 v1.5.7（`508758aa`），上游更新通过嫁接流程合入，细则见 [`GRAFTING.md`](GRAFTING.md)：
+
+```bash
+git fetch upstream && git merge upstream/main
+```
+
+在上游核心能力之外，本仓库的定制功能包括：
+
+- **豆包视频账号池**：多账号管理与任务调度，账号级浏览器指纹（UA / device_id / web_id 等）与「补指纹」机制，降低「顶点限流」触发概率；支持为账号绑定 socks5 代理实现 IP 轮换。
+- **豆包 Web 账号池**：网页通道账号管理，含代理绑定与 captcha 验证码处理流程。
+- **one-api / NewAPI 中转渠道**：通过中转服务调用豆包视频生成等模型，支持自有模型接入。
+- **webchat2api 插件**：将网页对话封装为 API 供工作流调用。
+- **视频去水印**：基于豆包 fallback 母片通道的输出处理。
+- **15 / 30 秒时长档**：视频生成时长档位扩展。
+- **Windows 桌面单机版**：`YingceDesktop.exe` 双击即用，无登录、本地数据（`data/` 随 exe 目录），基于 WebView2，见下文「Windows 桌面版」。
+
+上游在线演示：[https://ddcat.pronhubcn.com](https://ddcat.pronhubcn.com)（账号/密码：test/test123456）
 
 ## 核心能力
 
@@ -36,6 +52,10 @@
 
 ## 快速开始
 
+### Windows 桌面版（单机，开箱即用）
+
+双击仓库根目录的 `YingceDesktop.exe` 即可使用：无需登录，数据保存在 exe 旁边的 `data/` 目录。开发调试双进程模式可运行 `start.bat`（前端 3000 / 后端 8080）；重新构建桌面版使用 `build-desktop.bat`。
+
 ### 环境要求
 
 - [Bun](https://bun.sh/)：前端和文档站
@@ -45,7 +65,7 @@
 ### 宿主机启动
 
 ```bash
-git clone https://github.com/ddcat-ai/open-ai-canvas.git
+git clone https://github.com/12029293/open-ai-canvas.git
 cd open-ai-canvas
 
 # 使用 Git 忽略的目录保存本地开发数据和缓存
