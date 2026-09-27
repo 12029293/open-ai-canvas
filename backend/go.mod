@@ -7,7 +7,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-rod/rod v0.116.2
-	github.com/google/uuid v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/qiniu/go-sdk/v7 v7.27.0
@@ -16,6 +16,7 @@ require (
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
 	github.com/tetratelabs/wazero v1.9.0
 	github.com/volcengine/volc-sdk-golang v1.0.253
+	github.com/ysmood/gson v0.7.3
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
@@ -74,7 +75,6 @@ require (
 	github.com/ysmood/fetchup v0.2.3 // indirect
 	github.com/ysmood/goob v0.4.0 // indirect
 	github.com/ysmood/got v0.40.0 // indirect
-	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
