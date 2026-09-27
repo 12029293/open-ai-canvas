@@ -1,6 +1,6 @@
 module infinite-canvas/backend
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/aws/aws-sdk-go v1.40.45
@@ -16,11 +16,12 @@ require (
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
 	github.com/tetratelabs/wazero v1.9.0
 	github.com/volcengine/volc-sdk-golang v1.0.253
+	github.com/ysmood/gson v0.7.3
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.42.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
@@ -74,7 +75,6 @@ require (
 	github.com/ysmood/fetchup v0.2.3 // indirect
 	github.com/ysmood/goob v0.4.0 // indirect
 	github.com/ysmood/got v0.40.0 // indirect
-	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
